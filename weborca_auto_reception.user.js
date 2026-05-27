@@ -398,6 +398,27 @@
     }
 
     /**
+     * 現在の画面IDを取得する
+     */
+    getCurrentScreenId() {
+      if (document.getElementById('U02') && this.isElementVisible(document.getElementById('U02'))) {
+        return 'U02';
+      }
+      if (document.getElementById('M01') && this.isElementVisible(document.getElementById('M01'))) {
+        return 'M01';
+      }
+      if (document.getElementById('M00') && this.isElementVisible(document.getElementById('M00'))) {
+        return 'M00';
+      }
+      const userInput = document.querySelector('input[type="text"][name="user"], input[id="user"], input[type="text"]');
+      const passInput = document.querySelector('input[type="password"][name="password"], input[id="password"], input[type="password"]');
+      if (userInput && passInput && !document.getElementById('M00') && !document.getElementById('M01') && !document.getElementById('U02')) {
+        return 'Login';
+      }
+      return 'Unknown';
+    }
+
+    /**
      * 現在の画面状態をチェックし、必要に応じて自動画面遷移・自動ログインを行う
      */
     checkScreenAndNavigate() {
@@ -406,69 +427,83 @@
         return false;
       }
 
+      const screenId = this.getCurrentScreenId();
+      
+      // 画面が切り替わっていたら遷移ロックを自動解除する
+      if (this.lastScreenId && this.lastScreenId !== screenId) {
+        this.isNavigating = false;
+      }
+      this.lastScreenId = screenId;
+
       // すでに画面遷移中の場合は重ねて実行しない
       if (this.isNavigating) {
         return false;
       }
 
-      // 0. ログイン画面の検知と自動ログイン
-      const userInput = document.querySelector('input[type="text"][name="user"], input[id="user"], input[type="text"]');
-      const passInput = document.querySelector('input[type="password"][name="password"], input[id="password"], input[type="password"]');
-      const loginBtn = Array.from(document.querySelectorAll('button, input[type="submit"], input[type="button"]'))
-        .find(el => {
-          const text = (el.textContent || el.value || "").trim();
-          return text === "ログイン" || text === "ログインする";
-        });
-
-      const hasMainWindows = document.getElementById('M00') || document.getElementById('M01') || document.getElementById('U02');
-      if (userInput && passInput && loginBtn && !hasMainWindows) {
-        if (userInput.value === "" && passInput.value === "") {
-          this.isNavigating = true;
-          this.log("ログイン画面を検知。自動ログインを実行します...");
-          this.setInputValue(userInput, "ormaster");
-          this.setInputValue(passInput, "ormaster");
-          
-          setTimeout(() => {
-            this.log("ログインボタンをクリックします。");
-            loginBtn.click();
-            // ページ遷移が失敗した場合の保険のタイムアウト
-            setTimeout(() => { this.isNavigating = false; }, 5000);
-          }, 600);
-          return true;
+      // 0. ログイン画面の自動ログイン
+      if (screenId === 'Login') {
+        const userInput = document.querySelector('input[type="text"][name="user"], input[id="user"], input[type="text"]');
+        const passInput = document.querySelector('input[type="password"][name="password"], input[id="password"], input[type="password"]');
+        const loginBtn = Array.from(document.querySelectorAll('button, input[type="submit"], input[type="button"]'))
+          .find(el => {
+            const text = (el.textContent || el.value || "").trim();
+            return text === "ログイン" || text === "ログインする";
+          });
+        if (userInput && passInput && loginBtn) {
+          if (userInput.value === "" && passInput.value === "") {
+            this.isNavigating = true;
+            this.log("ログイン画面を検知。自動ログインを実行します...");
+            this.setInputValue(userInput, "ormaster");
+            this.setInputValue(passInput, "ormaster");
+            
+            setTimeout(() => {
+              this.log("ログインボタンをクリックします。");
+              loginBtn.click();
+              setTimeout(() => {
+                if (this.getCurrentScreenId() === 'Login') {
+                  this.isNavigating = false;
+                }
+              }, 5000);
+            }, 600);
+            return true;
+          }
         }
       }
 
-      // 1. M00 (マスターメニュー) がアクティブな場合
-      const m00 = document.getElementById('M00');
-      if (this.isElementVisible(m00)) {
+      // 1. M00 (マスターメニュー) の自動遷移
+      if (screenId === 'M00') {
         const btn = document.querySelector('#M00\\.fixed1\\.G01');
         if (btn) {
           this.isNavigating = true;
           this.log("マスターメニューを検知。「01 医事業務」をクリックして遷移します...");
           btn.click();
-          // ページ遷移が失敗した場合の保険のタイムアウト
-          setTimeout(() => { this.isNavigating = false; }, 5000);
+          setTimeout(() => {
+            if (this.getCurrentScreenId() === 'M00') {
+              this.isNavigating = false;
+            }
+          }, 5000);
           return true;
         }
       }
 
-      // 2. M01 (業務メニュー) がアクティブな場合
-      const m01 = document.getElementById('M01');
-      if (this.isElementVisible(m01)) {
+      // 2. M01 (業務メニュー) の自動遷移
+      if (screenId === 'M01') {
         const btn = document.querySelector('#M01\\.fixed1\\.G11');
         if (btn) {
           this.isNavigating = true;
           this.log("業務メニューを検知。「11 受付」をクリックして遷移します...");
           btn.click();
-          // ページ遷移が失敗した場合の保険のタイムアウト
-          setTimeout(() => { this.isNavigating = false; }, 5000);
+          setTimeout(() => {
+            if (this.getCurrentScreenId() === 'M01') {
+              this.isNavigating = false;
+            }
+          }, 5000);
           return true;
         }
       }
 
-      // 3. U02 (受付画面) がアクティブな場合
-      const u02 = document.getElementById('U02');
-      if (this.isElementVisible(u02)) {
+      // 3. U02 (受付画面) での自動受付ループ起動
+      if (screenId === 'U02') {
         if (!this.isRunning) {
           this.log("受付画面に到達。自動受付ループを起動します...");
           const cool = this.savedCool || "午前";
