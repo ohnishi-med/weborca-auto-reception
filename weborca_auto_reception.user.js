@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         WebORCA 自動受付ツール
 // @namespace    http://tampermonkey.net/
-// @version      1.6
-// @description  スプレッドシートから曜日・クールの患者リストを取得し、自動受付を行います (UI自動埋め込み・安定版)
+// @version      1.7
+// @description  スプレッドシートから曜日・クールの患者リストを取得し、自動受付を行います (自動ログイン制御可能版)
 // @author       Tsuyoshi Ohnishi
 // @match        *://weborca.cloud.orcamo.jp/*
 // @match        https://weborca.cloud.orcamo.jp/client.html*
@@ -28,6 +28,9 @@
 
   // デフォルトの診療科 (透析患者は "02 人工透析内" となります)
   const DEFAULT_DEPARTMENT = "02 人工透析内"; 
+
+  // 自動ログイン（ormaster）を有効にするか（※有効にする場合は true に変更してください）
+  const ENABLE_AUTO_LOGIN = false;
 
   // WebORCA 受付画面(U02)のDOMセレクタ
   const SELECTORS = {
@@ -63,7 +66,7 @@
   };
   // =============================================
 
-  // --- UIデザイン (ミントグリーン基調のプレミアムGlassmorphism) ---
+  // --- UIデザイン (ミントグリーン基調 of プレミアムGlassmorphism) ---
   GM_addStyle(`
     #weborca-reception-panel {
       position: fixed;
@@ -265,7 +268,6 @@
         <div id="reception-status">待機中...</div>
       `;
       
-      // bodyではなく、U02受付画面の要素の直下に追加する（これにより画面の非表示に追従する）
       u02.appendChild(div);
 
       this.panel = div;
@@ -360,27 +362,29 @@
      * 現在の画面状態をチェックし、必要に応じて自動画面遷移・自動ログインを行う
      */
     checkScreenAndNavigate() {
-      // 0. ログイン画面の検知と自動ログイン
-      const userInput = document.querySelector('input[type="text"][name="user"], input[id="user"], input[type="text"]');
-      const passInput = document.querySelector('input[type="password"][name="password"], input[id="password"], input[type="password"]');
-      const loginBtn = Array.from(document.querySelectorAll('button, input[type="submit"], input[type="button"]'))
-        .find(el => {
-          const text = (el.textContent || el.value || "").trim();
-          return text === "ログイン" || text === "ログインする";
-        });
+      // 0. ログイン画面の検知と自動ログイン（ENABLE_AUTO_LOGINがtrueの場合のみ実行）
+      if (ENABLE_AUTO_LOGIN) {
+        const userInput = document.querySelector('input[type="text"][name="user"], input[id="user"], input[type="text"]');
+        const passInput = document.querySelector('input[type="password"][name="password"], input[id="password"], input[type="password"]');
+        const loginBtn = Array.from(document.querySelectorAll('button, input[type="submit"], input[type="button"]'))
+          .find(el => {
+            const text = (el.textContent || el.value || "").trim();
+            return text === "ログイン" || text === "ログインする";
+          });
 
-      const hasMainWindows = document.getElementById('M00') || document.getElementById('M01') || document.getElementById('U02');
-      if (userInput && passInput && loginBtn && !hasMainWindows) {
-        if (userInput.value === "" && passInput.value === "") {
-          console.log("[WebORCA-Reception] ログイン画面を検知。自動ログインを実行します...");
-          this.setInputValue(userInput, "ormaster");
-          this.setInputValue(passInput, "ormaster");
-          
-          setTimeout(() => {
-            console.log("[WebORCA-Reception] ログインボタンをクリックします。");
-            loginBtn.click();
-          }, 600);
-          return true;
+        const hasMainWindows = document.getElementById('M00') || document.getElementById('M01') || document.getElementById('U02');
+        if (userInput && passInput && loginBtn && !hasMainWindows) {
+          if (userInput.value === "" && passInput.value === "") {
+            console.log("[WebORCA-Reception] ログイン画面を検知。自動ログインを実行します...");
+            this.setInputValue(userInput, "ormaster");
+            this.setInputValue(passInput, "ormaster");
+            
+            setTimeout(() => {
+              console.log("[WebORCA-Reception] ログインボタンをクリックします。");
+              loginBtn.click();
+            }, 600);
+            return true;
+          }
         }
       }
 
@@ -444,7 +448,7 @@
         this.log(`対象患者: ${this.patientsQueue.length}件 取得しました。`);
 
         if (this.patientsQueue.length === 0) {
-          this.log("対象の患者が存在しないため、処理を終了します。", "success");
+          this.log("対象 of 患者が存在しないため、処理を終了します。", "success");
           this.resetButtons();
           return;
         }
