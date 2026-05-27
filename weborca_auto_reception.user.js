@@ -29,8 +29,7 @@
   // デフォルトの診療科 (透析患者は "02 人工透析内" となります)
   const DEFAULT_DEPARTMENT = "02 人工透析内"; 
 
-  // 自動ログイン（ormaster）を有効にするか（※有効にする場合は true に変更してください）
-  const ENABLE_AUTO_LOGIN = false;
+
 
   // WebORCA 受付画面(U02)のDOMセレクタ
   const SELECTORS = {
@@ -204,26 +203,53 @@
       this.isStopped = false;
       this.patientsQueue = [];
       this.targetDoctor = "";
+      this.isNavigating = false;
+      
+      // セッション状態を読み込み
+      this.loadSessionState();
+      
+      // UIパネルを初期表示
+      this.initUI();
       
       this.initScreenObserver();
     }
 
-    initUI() {
-      // ターゲットとする親要素（U02受付画面）を探す
-      const u02 = document.getElementById('U02');
-      if (!u02) return;
+    loadSessionState() {
+      this.isActive = sessionStorage.getItem('weborca_auto_active') === 'true';
+      this.savedDay = sessionStorage.getItem('weborca_auto_day') || "";
+      this.savedCool = sessionStorage.getItem('weborca_auto_cool') || "";
+    }
 
+    saveSessionState(active, day, cool) {
+      sessionStorage.setItem('weborca_auto_active', active ? 'true' : 'false');
+      sessionStorage.setItem('weborca_auto_day', day || "");
+      sessionStorage.setItem('weborca_auto_cool', cool || "");
+      this.isActive = active;
+      this.savedDay = day || "";
+      this.savedCool = cool || "";
+    }
+
+    clearSessionState() {
+      sessionStorage.removeItem('weborca_auto_active');
+      sessionStorage.removeItem('weborca_auto_day');
+      sessionStorage.removeItem('weborca_auto_cool');
+      this.isActive = false;
+      this.savedDay = "";
+      this.savedCool = "";
+    }
+
+    initUI() {
       // すでにパネルが存在すれば何もしない
       if (document.getElementById('weborca-reception-panel')) return;
 
       const div = document.createElement('div');
       div.id = 'weborca-reception-panel';
       
-      // デフォルトの曜日・クールの自動設定
+      // デフォルトの曜日・クールの自動設定 (セッション保存値があれば優先)
       const now = new Date();
       const dayNames = ["日", "月", "火", "水", "木", "金", "土"];
-      const currentDay = dayNames[now.getDay()];
-      const currentCool = now.getHours() < 13 ? "午前" : "午後";
+      const currentDay = this.savedDay || dayNames[now.getDay()];
+      const currentCool = this.savedCool || (now.getHours() < 13 ? "午前" : "午後");
 
       div.innerHTML = `
         <h3>
@@ -268,7 +294,7 @@
         <div id="reception-status">待機中...</div>
       `;
       
-      u02.appendChild(div);
+      document.body.appendChild(div);
 
       this.panel = div;
       this.statusEl = div.querySelector('#reception-status');
@@ -303,6 +329,15 @@
         div.style.top = (origTop + e.clientY - startY) + 'px';
       });
       document.addEventListener('mouseup', () => { isDragging = false; });
+
+      // セッション状態がアクティブならボタンの表示を更新
+      if (this.isActive) {
+        this.startBtn.disabled = true;
+        if (this.startTodayBtn) this.startTodayBtn.disabled = true;
+        this.stopBtn.style.display = "block";
+        this.stopBtn.disabled = false;
+        this.log("自動実行中... 画面遷移を待機しています。");
+      }
     }
 
     log(msg, type = "info") {
@@ -325,6 +360,10 @@
       const observer = new MutationObserver((mutations) => {
         let shouldCheck = false;
         for (let mutation of mutations) {
+          // 変更のターゲットが自分自身 (#weborca-reception-panel) 内であれば無視する
+          if (mutation.target && typeof mutation.target.closest === 'function' && mutation.target.closest('#weborca-reception-panel')) {
+            continue;
+          }
           if (mutation.type === 'childList' || 
               (mutation.type === 'attributes' && (mutation.attributeName === 'style' || mutation.attributeName === 'class'))) {
             shouldCheck = true;
@@ -362,29 +401,40 @@
      * 現在の画面状態をチェックし、必要に応じて自動画面遷移・自動ログインを行う
      */
     checkScreenAndNavigate() {
-      // 0. ログイン画面の検知と自動ログイン（ENABLE_AUTO_LOGINがtrueの場合のみ実行）
-      if (ENABLE_AUTO_LOGIN) {
-        const userInput = document.querySelector('input[type="text"][name="user"], input[id="user"], input[type="text"]');
-        const passInput = document.querySelector('input[type="password"][name="password"], input[id="password"], input[type="password"]');
-        const loginBtn = Array.from(document.querySelectorAll('button, input[type="submit"], input[type="button"]'))
-          .find(el => {
-            const text = (el.textContent || el.value || "").trim();
-            return text === "ログイン" || text === "ログインする";
-          });
+      // セッション状態がアクティブでない場合は何もしない
+      if (!this.isActive) {
+        return false;
+      }
 
-        const hasMainWindows = document.getElementById('M00') || document.getElementById('M01') || document.getElementById('U02');
-        if (userInput && passInput && loginBtn && !hasMainWindows) {
-          if (userInput.value === "" && passInput.value === "") {
-            console.log("[WebORCA-Reception] ログイン画面を検知。自動ログインを実行します...");
-            this.setInputValue(userInput, "ormaster");
-            this.setInputValue(passInput, "ormaster");
-            
-            setTimeout(() => {
-              console.log("[WebORCA-Reception] ログインボタンをクリックします。");
-              loginBtn.click();
-            }, 600);
-            return true;
-          }
+      // すでに画面遷移中の場合は重ねて実行しない
+      if (this.isNavigating) {
+        return false;
+      }
+
+      // 0. ログイン画面の検知と自動ログイン
+      const userInput = document.querySelector('input[type="text"][name="user"], input[id="user"], input[type="text"]');
+      const passInput = document.querySelector('input[type="password"][name="password"], input[id="password"], input[type="password"]');
+      const loginBtn = Array.from(document.querySelectorAll('button, input[type="submit"], input[type="button"]'))
+        .find(el => {
+          const text = (el.textContent || el.value || "").trim();
+          return text === "ログイン" || text === "ログインする";
+        });
+
+      const hasMainWindows = document.getElementById('M00') || document.getElementById('M01') || document.getElementById('U02');
+      if (userInput && passInput && loginBtn && !hasMainWindows) {
+        if (userInput.value === "" && passInput.value === "") {
+          this.isNavigating = true;
+          this.log("ログイン画面を検知。自動ログインを実行します...");
+          this.setInputValue(userInput, "ormaster");
+          this.setInputValue(passInput, "ormaster");
+          
+          setTimeout(() => {
+            this.log("ログインボタンをクリックします。");
+            loginBtn.click();
+            // ページ遷移が失敗した場合の保険のタイムアウト
+            setTimeout(() => { this.isNavigating = false; }, 5000);
+          }, 600);
+          return true;
         }
       }
 
@@ -393,8 +443,11 @@
       if (this.isElementVisible(m00)) {
         const btn = document.querySelector('#M00\\.fixed1\\.G01');
         if (btn) {
-          console.log("[WebORCA-Reception] マスターメニューを検知。「01 医事業務」をクリックして遷移します...");
+          this.isNavigating = true;
+          this.log("マスターメニューを検知。「01 医事業務」をクリックして遷移します...");
           btn.click();
+          // ページ遷移が失敗した場合の保険のタイムアウト
+          setTimeout(() => { this.isNavigating = false; }, 5000);
           return true;
         }
       }
@@ -404,35 +457,69 @@
       if (this.isElementVisible(m01)) {
         const btn = document.querySelector('#M01\\.fixed1\\.G11');
         if (btn) {
-          console.log("[WebORCA-Reception] 業務メニューを検知。「11 受付」をクリックして遷移します...");
+          this.isNavigating = true;
+          this.log("業務メニューを検知。「11 受付」をクリックして遷移します...");
           btn.click();
+          // ページ遷移が失敗した場合の保険のタイムアウト
+          setTimeout(() => { this.isNavigating = false; }, 5000);
           return true;
         }
       }
 
-      // 3. U02 (受付画面) がアクティブな場合のみ自動受付パネルを作成して表示
+      // 3. U02 (受付画面) がアクティブな場合
       const u02 = document.getElementById('U02');
       if (this.isElementVisible(u02)) {
-        if (!this.panel) {
-          this.initUI();
+        if (!this.isRunning) {
+          this.log("受付画面に到達。自動受付ループを起動します...");
+          const cool = this.savedCool || "午前";
+          setTimeout(() => {
+            if (cool === "all") {
+              this.runProcessLoop("all");
+            } else {
+              this.runProcessLoop();
+            }
+          }, 1000);
+          return true;
         }
       }
       return false;
     }
 
-    async startProcess(coolOverride = null) {
-      if (this.isRunning) return;
-      this.isRunning = true;
-      this.isStopped = false;
+    startProcess(coolOverride = null) {
+      if (this.isActive || this.isRunning) return;
+
+      const day = this.daySelect.value;
+      const cool = coolOverride || this.coolSelect.value;
+
+      // セッションストレージに実行状態を保存
+      this.saveSessionState(true, day, cool);
+
       this.startBtn.disabled = true;
       if (this.startTodayBtn) this.startTodayBtn.disabled = true;
       this.stopBtn.style.display = "block";
       this.stopBtn.disabled = false;
+
+      this.log(`自動受付処理を開始しました。(${day}曜日 / ${cool === 'all' ? '本日分' : cool})`);
       
-      const day = this.daySelect.value;
-      const cool = coolOverride || this.coolSelect.value;
-      
-      if (coolOverride === "all") {
+      // 画面の自動遷移チェックをキック
+      this.checkScreenAndNavigate();
+    }
+
+    async runProcessLoop(coolOverride = null) {
+      if (this.isRunning) return;
+      this.isRunning = true;
+      this.isStopped = false;
+
+      // UIのボタン表示状態を強制更新
+      this.startBtn.disabled = true;
+      if (this.startTodayBtn) this.startTodayBtn.disabled = true;
+      this.stopBtn.style.display = "block";
+      this.stopBtn.disabled = false;
+
+      const day = this.savedDay;
+      const cool = coolOverride || this.savedCool;
+
+      if (cool === "all") {
         this.log(`${day}曜日の全スケジュール（午前・午後）の自動受付を開始します...`);
       } else {
         this.log(`${day}曜日・${cool}クールの自動受付を開始します...`);
@@ -448,12 +535,13 @@
         this.log(`対象患者: ${this.patientsQueue.length}件 取得しました。`);
 
         if (this.patientsQueue.length === 0) {
-          this.log("対象 of 患者が存在しないため、処理を終了します。", "success");
+          this.log("対象の患者が存在しないため、処理を終了します。", "success");
+          this.clearSessionState();
           this.resetButtons();
           return;
         }
 
-        // 2. 自動受付ループを実行
+        // 自動受付ループを実行
         for (let i = 0; i < this.patientsQueue.length; i++) {
           if (this.isStopped) {
             this.log("一時停止されました。", "error");
@@ -476,10 +564,14 @@
 
         if (!this.isStopped) {
           this.log("すべての患者の受付処理が完了しました！", "success");
+          this.clearSessionState();
+        } else {
+          this.clearSessionState();
         }
 
       } catch (err) {
         this.log(`システムエラー: ${err.message}`, "error");
+        this.clearSessionState();
       } finally {
         this.resetButtons();
       }
@@ -489,6 +581,7 @@
       this.isStopped = true;
       this.stopBtn.disabled = true;
       this.log("中断指示を受信しました。現在の処理完了後に一時停止します。");
+      this.clearSessionState();
     }
 
     resetButtons() {
