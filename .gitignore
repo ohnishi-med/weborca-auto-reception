@@ -1,0 +1,14 @@
+# WebORCA 自動受付システム .gitignore
+
+# 機密情報の除外
+settings.txt
+config.json
+
+# エディタ設定ファイル
+.vscode/
+.idea/
+
+# OS一時ファイル
+Thumbs.db
+desktop.ini
+.DS_Store
