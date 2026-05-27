@@ -291,6 +291,18 @@
         <button class="reception-btn-secondary" id="reception-stop">
           一時停止/中断
         </button>
+        
+        <!-- 患者プレビューエリア -->
+        <div id="reception-preview-container" style="display: none; margin-top: 12px; border: 1px solid rgba(13, 148, 136, 0.2); border-radius: 8px; background: rgba(255, 255, 255, 0.9); overflow: hidden;">
+          <div style="font-size: 11px; font-weight: 600; padding: 6px 10px; background: rgba(13, 148, 136, 0.1); border-bottom: 1px solid rgba(13, 148, 136, 0.2); color: #0f766e; display: flex; justify-content: space-between;">
+            <span>取得患者リスト</span>
+            <span id="preview-count">0件</span>
+          </div>
+          <div id="reception-preview-list" style="max-height: 120px; overflow-y: auto; font-size: 11px; color: #334155; font-family: monospace; padding: 4px 8px;">
+            <!-- ここに動的に患者を生成 -->
+          </div>
+        </div>
+
         <div id="reception-status">待機中...</div>
       `;
       
@@ -303,6 +315,9 @@
       this.stopBtn = div.querySelector('#reception-stop');
       this.daySelect = div.querySelector('#reception-day');
       this.coolSelect = div.querySelector('#reception-cool');
+      this.previewContainer = div.querySelector('#reception-preview-container');
+      this.previewListEl = div.querySelector('#reception-preview-list');
+      this.previewCountEl = div.querySelector('#preview-count');
 
       this.startBtn.addEventListener('click', () => this.startProcess());
       this.startTodayBtn.addEventListener('click', () => this.startProcess("all"));
@@ -351,6 +366,47 @@
       const line = `<span ${classAttr}>[${now}] ${msg}</span><br/>`;
       this.statusEl.innerHTML = line + this.statusEl.innerHTML;
       console.log(`[WebORCA-Reception] ${msg}`);
+    }
+
+    updatePreviewList(patients) {
+      if (!this.previewListEl || !this.previewContainer) return;
+      
+      if (!patients || patients.length === 0) {
+        this.previewContainer.style.display = 'none';
+        this.previewListEl.innerHTML = '';
+        return;
+      }
+
+      this.previewCountEl.textContent = `${patients.length}件`;
+      this.previewListEl.innerHTML = patients.map(p => `
+        <div style="padding: 6px 4px; border-bottom: 1px solid rgba(0,0,0,0.05); display: flex; justify-content: space-between; align-items: center; transition: background-color 0.2s;" id="preview-row-${p.patientId}">
+          <span style="font-weight: bold;">${p.patientId} <span style="font-weight: normal; font-size: 9px; color: #64748b;">(${p.cool})</span></span>
+          <span style="color: #475569; font-size: 10px;" class="preview-status-badge">${p.insuranceType} / ${p.doctor || '無'}</span>
+        </div>
+      `).join('');
+      
+      this.previewContainer.style.display = 'block';
+    }
+
+    setPreviewRowStatus(patientId, status, extraMessage = "") {
+      const row = this.panel?.querySelector(`#preview-row-${patientId}`);
+      if (!row) return;
+
+      const badge = row.querySelector('.preview-status-badge');
+
+      if (status === 'processing') {
+        row.style.backgroundColor = 'rgba(254, 240, 138, 0.5)'; // 薄い黄色
+        if (badge) badge.innerHTML = `<span style="color: #a16207; font-weight: bold;">処理中...</span>`;
+      } else if (status === 'success') {
+        row.style.backgroundColor = 'rgba(204, 251, 241, 0.5)'; // 薄いミントグリーン
+        row.style.color = '#64748b';
+        row.style.textDecoration = 'line-through';
+        if (badge) badge.innerHTML = `<span style="color: #0d9488; font-weight: bold;">✓ 完了</span>`;
+      } else if (status === 'error') {
+        row.style.backgroundColor = 'rgba(254, 226, 226, 0.5)'; // 薄い赤色
+        row.style.color = '#b91c1c';
+        if (badge) badge.innerHTML = `<span style="color: #dc2626; font-weight: bold;" title="${extraMessage}">✗ 失敗</span>`;
+      }
     }
 
     /**
@@ -551,6 +607,9 @@
       this.stopBtn.style.display = "block";
       this.stopBtn.disabled = false;
 
+      // プレビューリストを初期クリア
+      this.updatePreviewList([]);
+
       const day = this.savedDay;
       const cool = coolOverride || this.savedCool;
 
@@ -569,6 +628,9 @@
         
         this.log(`対象患者: ${this.patientsQueue.length}件 取得しました。`);
 
+        // プレビューリストに表示
+        this.updatePreviewList(this.patientsQueue);
+
         if (this.patientsQueue.length === 0) {
           this.log("対象の患者が存在しないため、処理を終了します。", "success");
           this.clearSessionState();
@@ -585,12 +647,15 @@
 
           const patient = this.patientsQueue[i];
           this.log(`処理中 (${i + 1}/${this.patientsQueue.length}): 患者ID ${patient.patientId} (${patient.cool || '共通'})`);
+          this.setPreviewRowStatus(patient.patientId, 'processing');
           
           try {
             await this.processReception(patient);
             this.log(`成功: 患者ID ${patient.patientId}`, "success");
+            this.setPreviewRowStatus(patient.patientId, 'success');
           } catch (patientErr) {
             this.log(`失敗: 患者ID ${patient.patientId} - ${patientErr.message}`, "error");
+            this.setPreviewRowStatus(patient.patientId, 'error', patientErr.message);
             this.isStopped = true;
             this.log("安全のため自動処理を一時停止しました。再開する場合は再度開始ボタンを押してください。", "error");
             break;
