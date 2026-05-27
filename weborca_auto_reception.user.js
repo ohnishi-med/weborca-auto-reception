@@ -3,7 +3,7 @@
 // @namespace    http://tampermonkey.net/
 // @version      1.5
 // @description  スプレッドシートから曜日・クールの患者リストを取得し、自動受付を行います (本日分一括受付対応版)
-// @author       Antigravity
+// @author       Tsuyoshi Ohnishi
 // @match        *://weborca.cloud.orcamo.jp/*
 // @match        https://weborca.cloud.orcamo.jp/client.html*
 // @run-at       document-idle
