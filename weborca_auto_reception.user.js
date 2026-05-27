@@ -11,6 +11,8 @@
 // @grant        GM_addStyle
 // @connect      script.google.com
 // @connect      googleusercontent.com
+// @updateURL    https://raw.githubusercontent.com/ohnishi-med/weborca-auto-reception/master/weborca_auto_reception.user.js
+// @downloadURL  https://raw.githubusercontent.com/ohnishi-med/weborca-auto-reception/master/weborca_auto_reception.user.js
 // ==/UserScript==
 
 (function() {
