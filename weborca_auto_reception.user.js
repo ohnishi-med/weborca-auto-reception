@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WebORCA 自動受付ツール
 // @namespace    http://tampermonkey.net/
-// @version      1.7
+// @version      1.8
 // @description  スプレッドシートから曜日・クールの患者リストを取得し、自動受付を行います (自動ログイン制御可能版)
 // @author       Tsuyoshi Ohnishi
 // @match        *://weborca.cloud.orcamo.jp/*
