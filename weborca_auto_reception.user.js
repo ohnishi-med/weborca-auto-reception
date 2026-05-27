@@ -316,7 +316,7 @@
         let shouldCheck = false;
         for (let mutation of mutations) {
           if (mutation.type === 'childList' || 
-              (mutation.type === 'attributes' && (mutation.attributeName === 'style' || mutation.attributeName === 'class')) {
+              (mutation.type === 'attributes' && (mutation.attributeName === 'style' || mutation.attributeName === 'class'))) {
             shouldCheck = true;
             break;
           }
