@@ -617,6 +617,13 @@
       this.stopBtn.disabled = true;
       this.log("中断指示を受信しました。現在の処理完了後に一時停止します。");
       this.clearSessionState();
+      
+      // もし受付処理ループが開始される前（画面遷移中など）に中断された場合は、即座にUIをリセットする
+      if (!this.isRunning) {
+        this.log("画面遷移処理を中断しました。");
+        this.isNavigating = false;
+        this.resetButtons();
+      }
     }
 
     resetButtons() {
