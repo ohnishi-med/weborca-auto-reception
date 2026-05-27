@@ -70,6 +70,12 @@ function doGet(e) {
     let targetDay = e && e.parameter && e.parameter.day;
     let targetCool = e && e.parameter && e.parameter.cool; // "午前", "午後", "all", "AM", "PM"
 
+    // 曜日の表記ゆらぎ吸収用の検索文字定義 (例: "水曜日" -> "水")
+    let searchDay = targetDay;
+    if (searchDay && searchDay.length > 1) {
+      searchDay = searchDay.replace("曜日", "").trim();
+    }
+
     // パラメータ未指定時の自動判定ロジック
     if (!targetDay || !targetCool) {
       const now = new Date();
@@ -82,7 +88,10 @@ function doGet(e) {
       const currentHour = now.getHours();
       const currentCool = currentHour < 13 ? "午前" : "午後";
 
-      if (!targetDay) targetDay = currentDay;
+      if (!targetDay) {
+        targetDay = currentDay;
+        searchDay = currentDay;
+      }
       if (!targetCool) targetCool = currentCool;
     }
 
@@ -99,7 +108,7 @@ function doGet(e) {
     for (let col = 1; col < doctorHeaderRow.length; col++) {
       const headerVal = String(doctorHeaderRow[col] || "").trim();
       // "月" または "月曜日" のように部分一致を含めて判定
-      if (headerVal === targetDay || headerVal.indexOf(targetDay) === 0 || targetDay.indexOf(headerVal) === 0) {
+      if (headerVal === searchDay || headerVal.indexOf(searchDay) !== -1 || searchDay.indexOf(headerVal) !== -1) {
         doctorColIndex = col;
         break;
       }
@@ -127,8 +136,8 @@ function doGet(e) {
       const day = String(row[colDay] || "").trim();
       const cool = String(row[colCool] || "").trim();
 
-      // 患者IDがあり、かつ曜日が一致する場合
-      if (patientId && (day === targetDay || day.indexOf(targetDay) === 0 || targetDay.indexOf(day) === 0)) {
+      // 患者IDがあり、かつ曜日が一致する場合 ("月水金" などの連結表記に対応するため部分一致判定)
+      if (patientId && (day === searchDay || day.indexOf(searchDay) !== -1)) {
         
         // クールの判定 (targetCoolが "all" の場合は全て合致とする)
         const isCoolMatch = (targetCool === "all") || 
