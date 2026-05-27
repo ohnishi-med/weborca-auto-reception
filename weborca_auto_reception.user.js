@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         WebORCA 自動受付ツール
 // @namespace    http://tampermonkey.net/
-// @version      1.5
-// @description  スプレッドシートから曜日・クールの患者リストを取得し、自動受付を行います (本日分一括受付対応版)
+// @version      1.6
+// @description  スプレッドシートから曜日・クールの患者リストを取得し、自動受付を行います (UI自動埋め込み・安定版)
 // @author       Tsuyoshi Ohnishi
 // @match        *://weborca.cloud.orcamo.jp/*
 // @match        https://weborca.cloud.orcamo.jp/client.html*
@@ -79,7 +79,6 @@
       z-index: 99999;
       font-family: "Inter", "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif;
       color: #0f172a;
-      display: none; /* 初期状態は非表示（受付画面でのみ表示） */
     }
     #weborca-reception-panel h3 {
       margin: 0 0 15px 0;
@@ -203,11 +202,17 @@
       this.patientsQueue = [];
       this.targetDoctor = "";
       
-      this.initUI();
       this.initScreenObserver();
     }
 
     initUI() {
+      // ターゲットとする親要素（U02受付画面）を探す
+      const u02 = document.getElementById('U02');
+      if (!u02) return;
+
+      // すでにパネルが存在すれば何もしない
+      if (document.getElementById('weborca-reception-panel')) return;
+
       const div = document.createElement('div');
       div.id = 'weborca-reception-panel';
       
@@ -259,7 +264,9 @@
         </button>
         <div id="reception-status">待機中...</div>
       `;
-      document.body.appendChild(div);
+      
+      // bodyではなく、U02受付画面の要素の直下に追加する（これにより画面の非表示に追従する）
+      u02.appendChild(div);
 
       this.panel = div;
       this.statusEl = div.querySelector('#reception-status');
@@ -297,6 +304,7 @@
     }
 
     log(msg, type = "info") {
+      if (!this.statusEl) return;
       const now = new Date().toLocaleTimeString();
       let classAttr = "";
       if (type === "success") classAttr = 'class="log-success"';
@@ -364,12 +372,12 @@
       const hasMainWindows = document.getElementById('M00') || document.getElementById('M01') || document.getElementById('U02');
       if (userInput && passInput && loginBtn && !hasMainWindows) {
         if (userInput.value === "" && passInput.value === "") {
-          this.log("ログイン画面を検知。自動ログインを実行します...", "info");
+          console.log("[WebORCA-Reception] ログイン画面を検知。自動ログインを実行します...");
           this.setInputValue(userInput, "ormaster");
           this.setInputValue(passInput, "ormaster");
           
           setTimeout(() => {
-            this.log("ログインボタンをクリックします。", "info");
+            console.log("[WebORCA-Reception] ログインボタンをクリックします。");
             loginBtn.click();
           }, 600);
           return true;
@@ -381,9 +389,8 @@
       if (this.isElementVisible(m00)) {
         const btn = document.querySelector('#M00\\.fixed1\\.G01');
         if (btn) {
-          this.log("マスターメニューを検知。「01 医事業務」をクリックして遷移します...", "info");
+          console.log("[WebORCA-Reception] マスターメニューを検知。「01 医事業務」をクリックして遷移します...");
           btn.click();
-          if (this.panel) this.panel.style.display = 'none';
           return true;
         }
       }
@@ -393,19 +400,18 @@
       if (this.isElementVisible(m01)) {
         const btn = document.querySelector('#M01\\.fixed1\\.G11');
         if (btn) {
-          this.log("業務メニューを検知。「11 受付」をクリックして遷移します...", "info");
+          console.log("[WebORCA-Reception] 業務メニューを検知。「11 受付」をクリックして遷移します...");
           btn.click();
-          if (this.panel) this.panel.style.display = 'none';
           return true;
         }
       }
 
-      // 3. U02 (受付画面) がアクティブな場合のみ自動受付パネルを表示
+      // 3. U02 (受付画面) がアクティブな場合のみ自動受付パネルを作成して表示
       const u02 = document.getElementById('U02');
       if (this.isElementVisible(u02)) {
-        if (this.panel) this.panel.style.display = 'block';
-      } else {
-        if (this.panel) this.panel.style.display = 'none';
+        if (!this.panel) {
+          this.initUI();
+        }
       }
       return false;
     }
