@@ -8,12 +8,6 @@
 const SHEET_NAME_PATIENTS = "patient_list";
 const SHEET_NAME_DOCTORS = "HD_Dr";
 
-// patient_list シートの列インデックス (0始まり)
-const PATIENT_COL_ID = 0;             // A列: 患者ID
-const PATIENT_COL_INSURANCE = 1;      // B列: 保険区分
-const PATIENT_COL_DAY = 2;            // C列: 曜日
-const PATIENT_COL_COOL = 3;           // D列: クール (午前/午後)
-
 // HD_Dr シートの設定 (横持ちマトリックス構造)
 const DOCTOR_COL_COOL_LABEL = 0;      // A列: クールラベル ("AM" または "PM")
 // ------------------
@@ -28,6 +22,47 @@ function doGet(e) {
       return createJsonResponse({
         status: "error",
         message: `必要なシートが見つかりません。シート名 [${SHEET_NAME_PATIENTS}] または [${SHEET_NAME_DOCTORS}] を確認してください。`
+      });
+    }
+
+    // 1. 患者リストの取得とヘッダー列の自動解析
+    const patientData = patientSheet.getDataRange().getValues();
+    const headerRow = patientData[0];
+    
+    // デフォルト値 (A列: ID, B列: 保険, C列: 曜日, D列: クール)
+    let colId = 0;
+    let colInsurance = 1;
+    let colDay = 2;
+    let colCool = 3;
+    
+    // ヘッダー文字列から列インデックスを自動的に検出 (順不同や「氏名」列が挟まれている場合に対応)
+    for (let col = 0; col < headerRow.length; col++) {
+      const headerName = String(headerRow[col] || "").trim();
+      if (headerName.indexOf("ID") !== -1 || headerName.indexOf("番号") !== -1 || headerName.indexOf("コード") !== -1) {
+        colId = col;
+      } else if (headerName.indexOf("保険") !== -1 || headerName.indexOf("区分") !== -1 || headerName.indexOf("種別") !== -1) {
+        colInsurance = col;
+      } else if (headerName.indexOf("曜日") !== -1) {
+        colDay = col;
+      } else if (headerName.indexOf("クール") !== -1 || headerName.indexOf("時間") !== -1 || headerName.indexOf("時間帯") !== -1 || headerName.indexOf("午前/午後") !== -1) {
+        colCool = col;
+      }
+    }
+
+    // デバッグパラメータが指定された場合はスプレッドシートの構造情報を返す
+    if (e && e.parameter && e.parameter.debug === "1") {
+      return createJsonResponse({
+        status: "debug",
+        message: "スプレッドシートの構造情報をダンプしました。",
+        detectedColumns: {
+          "患者ID列": { index: colId, name: headerRow[colId] },
+          "保険区分列": { index: colInsurance, name: headerRow[colInsurance] },
+          "曜日列": { index: colDay, name: headerRow[colDay] },
+          "クール列": { index: colCool, name: headerRow[colCool] }
+        },
+        patientHeaders: headerRow,
+        patientSampleRow: patientData.length > 1 ? patientData[1] : null,
+        doctorHeaders: doctorSheet.getDataRange().getValues()[0]
       });
     }
 
@@ -51,7 +86,7 @@ function doGet(e) {
       if (!targetCool) targetCool = currentCool;
     }
 
-    // 1. 担当医マッピングの作成 (HD_Drシート - 横持ちマトリックスからAM/PM両方の医師を取得)
+    // 2. 担当医マッピングの作成 (HD_Drシート - 横持ちマトリックスからAM/PM両方の医師を取得)
     const doctorData = doctorSheet.getDataRange().getValues();
     const doctorsMap = {
       "午前": "未設定",
@@ -59,39 +94,38 @@ function doGet(e) {
     };
     
     // 曜日の列インデックスを探す (1行目: B1〜H1 から検索)
-    const headerRow = doctorData[0];
-    let colIndex = -1;
-    for (let col = 1; col < headerRow.length; col++) {
-      const headerVal = String(headerRow[col] || "").trim();
+    const doctorHeaderRow = doctorData[0];
+    let doctorColIndex = -1;
+    for (let col = 1; col < doctorHeaderRow.length; col++) {
+      const headerVal = String(doctorHeaderRow[col] || "").trim();
       // "月" または "月曜日" のように部分一致を含めて判定
       if (headerVal === targetDay || headerVal.indexOf(targetDay) === 0 || targetDay.indexOf(headerVal) === 0) {
-        colIndex = col;
+        doctorColIndex = col;
         break;
       }
     }
 
-    if (colIndex !== -1) {
+    if (doctorColIndex !== -1) {
       for (let row = 1; row < doctorData.length; row++) {
         const cellVal = String(doctorData[row][DOCTOR_COL_COOL_LABEL] || "").trim().toUpperCase();
         if (cellVal === "AM") {
-          doctorsMap["午前"] = String(doctorData[row][colIndex] || "").trim();
+          doctorsMap["午前"] = String(doctorData[row][doctorColIndex] || "").trim();
         } else if (cellVal === "PM") {
-          doctorsMap["午後"] = String(doctorData[row][colIndex] || "").trim();
+          doctorsMap["午後"] = String(doctorData[row][doctorColIndex] || "").trim();
         }
       }
     }
 
-    // 2. 患者リストの取得 (patient_listシート)
-    const patientData = patientSheet.getDataRange().getValues();
+    // 3. 患者リストの取得 (自動検出したインデックス値を使用)
     const patients = [];
 
     // ヘッダー行を除いて抽出
     for (let i = 1; i < patientData.length; i++) {
       const row = patientData[i];
-      const patientId = String(row[PATIENT_COL_ID] || "").trim();
-      const insuranceType = String(row[PATIENT_COL_INSURANCE] || "").trim();
-      const day = String(row[PATIENT_COL_DAY] || "").trim();
-      const cool = String(row[PATIENT_COL_COOL] || "").trim();
+      const patientId = String(row[colId] || "").trim();
+      const insuranceType = String(row[colInsurance] || "").trim();
+      const day = String(row[colDay] || "").trim();
+      const cool = String(row[colCool] || "").trim();
 
       // 患者IDがあり、かつ曜日が一致する場合
       if (patientId && (day === targetDay || day.indexOf(targetDay) === 0 || targetDay.indexOf(day) === 0)) {
