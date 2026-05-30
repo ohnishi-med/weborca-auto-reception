@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WebORCA 自動受付ツール
 // @namespace    http://tampermonkey.net/
-// @version      1.8
+// @version      1.9
 // @description  スプレッドシートから曜日・クールの患者リストを取得し、自動受付を行います (自動ログイン制御可能版)
 // @author       Tsuyoshi Ohnishi
 // @match        *://weborca.cloud.orcamo.jp/*
@@ -252,14 +252,20 @@
       const currentCool = this.savedCool || (now.getHours() < 13 ? "午前" : "午後");
 
       div.innerHTML = `
-        <h3>
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path>
-            <circle cx="9" cy="7" r="4"></circle>
-            <path d="M22 21v-2a4 4 0 0 0-3-3.87"></path>
-            <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
-          </svg>
-          WebORCA 自動受付
+        <h3 style="display:flex; justify-content:space-between; align-items:center;">
+          <span style="display:flex; align-items:center; gap:6px;">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path>
+              <circle cx="9" cy="7" r="4"></circle>
+              <path d="M22 21v-2a4 4 0 0 0-3-3.87"></path>
+              <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+            </svg>
+            WebORCA 自動受付
+          </span>
+          <div style="display:flex; gap:4px;">
+            <button id="reception-minimize" title="最小化" style="background:none;border:none;color:#0f766e;font-size:14px;cursor:pointer;">&#x2212;</button>
+            <button id="reception-close" title="閉じる" style="background:none;border:none;color:#e11d48;font-size:14px;cursor:pointer;">&#x2715;</button>
+          </div>
         </h3>
         <div class="reception-flex reception-form-group">
           <div>
@@ -306,6 +312,18 @@
         <div id="reception-status">待機中...</div>
       `;
       
+      // 包含全体のボディ（ヘッダー以外）を取得し、最小化対象にする
+      const bodyDiv = document.createElement('div');
+      bodyDiv.id = 'reception-body';
+      // ヘッダー(h3) の次の全要素を bodyDiv に移動
+      let sibling = div.querySelector('h3').nextElementSibling;
+      while (sibling) {
+        const next = sibling.nextElementSibling;
+        bodyDiv.appendChild(sibling);
+        sibling = next;
+      }
+      div.appendChild(bodyDiv);
+      
       document.body.appendChild(div);
 
       this.panel = div;
@@ -313,6 +331,8 @@
       this.startBtn = div.querySelector('#reception-start');
       this.startTodayBtn = div.querySelector('#reception-start-today');
       this.stopBtn = div.querySelector('#reception-stop');
+      // body container for minimize toggle
+      this.bodyContainer = div.querySelector('#reception-body');
       this.daySelect = div.querySelector('#reception-day');
       this.coolSelect = div.querySelector('#reception-cool');
       this.previewContainer = div.querySelector('#reception-preview-container');
@@ -322,6 +342,10 @@
       this.startBtn.addEventListener('click', () => this.startProcess());
       this.startTodayBtn.addEventListener('click', () => this.startProcess("all"));
       this.stopBtn.addEventListener('click', () => this.stopProcess());
+      this.minimizeBtn = div.querySelector('#reception-minimize');
+      this.closeBtn = div.querySelector('#reception-close');
+      this.minimizeBtn.addEventListener('click', () => this.toggleMinimize());
+      this.closeBtn.addEventListener('click', () => this.closePanel());
 
       // ドラッグ移動の実装
       const handle = div.querySelector('h3');
@@ -353,6 +377,9 @@
         this.stopBtn.disabled = false;
         this.log("自動実行中... 画面遷移を待機しています。");
       }
+      // 初期状態は展開表示
+      this.isMinimized = false;
+      this.bodyContainer.style.display = 'block';
     }
 
     log(msg, type = "info") {
@@ -378,12 +405,18 @@
       }
 
       this.previewCountEl.textContent = `${patients.length}件`;
-      this.previewListEl.innerHTML = patients.map(p => `
-        <div style="padding: 6px 4px; border-bottom: 1px solid rgba(0,0,0,0.05); display: flex; justify-content: space-between; align-items: center; transition: background-color 0.2s;" id="preview-row-${p.patientId}">
-          <span style="font-weight: bold;">${p.patientId} <span style="font-weight: normal; font-size: 9px; color: #64748b;">(${p.cool})</span></span>
-          <span style="color: #475569; font-size: 10px;" class="preview-status-badge">${p.insuranceType} / ${p.doctor || '無'}</span>
-        </div>
-      `).join('');
+      this.previewListEl.innerHTML = patients.map(p => {
+        const insText = `${p.insuranceType}` + 
+                        `${p.publicFund1 ? ' ' + p.publicFund1 : ''}` + 
+                        `${p.publicFund2 ? ' ' + p.publicFund2 : ''}` + 
+                        `${p.publicFund3 ? ' ' + p.publicFund3 : ''}`;
+        return `
+          <div style="padding: 6px 4px; border-bottom: 1px solid rgba(0,0,0,0.05); display: flex; justify-content: space-between; align-items: center; transition: background-color 0.2s;" id="preview-row-${p.patientId}">
+            <span style="font-weight: bold;">${p.patientId} <span style="font-weight: normal; font-size: 9px; color: #64748b;">(${p.cool})</span></span>
+            <span style="color: #475569; font-size: 10px;" class="preview-status-badge">${insText} / ${p.doctor || '無'}</span>
+          </div>
+        `;
+      }).join('');
       
       this.previewContainer.style.display = 'block';
     }
@@ -698,6 +731,23 @@
       this.stopBtn.style.display = "none";
     }
 
+    // パネルを閉じる
+    closePanel() {
+      if (this.panel) {
+        this.panel.remove();
+        this.panel = null;
+        this.isActive = false;
+        this.saveSessionState(false, "", "");
+      }
+    }
+
+    // パネルの最小化／展開を切り替える
+    toggleMinimize() {
+      if (!this.bodyContainer) return;
+      this.isMinimized = !this.isMinimized;
+      this.bodyContainer.style.display = this.isMinimized ? 'none' : 'block';
+    }
+
     fetchData(day, cool) {
       return new Promise((resolve, reject) => {
         if (GAS_API_URL.includes("YOUR_GAS_API_ID")) {
@@ -748,7 +798,12 @@
 
       // 3. 保険区分（保険組合せ）の選択
       if (patient.insuranceType) {
-        this.log(`保険区分「${patient.insuranceType}」を探しています...`);
+        const combinationText = `${patient.insuranceType}` + 
+                                `${patient.publicFund1 ? ' ' + patient.publicFund1 : ''}` + 
+                                `${patient.publicFund2 ? ' ' + patient.publicFund2 : ''}` + 
+                                `${patient.publicFund3 ? ' ' + patient.publicFund3 : ''}`;
+
+        this.log(`保険公費組合せ「${combinationText}」を探しています...`);
         const table = document.querySelector(SELECTORS.insuranceTable);
         const insuranceInput = document.querySelector(SELECTORS.insuranceInput);
         
@@ -758,19 +813,34 @@
           let combinationCode = "";
 
           for (let row of rows) {
-            const text = row.textContent || "";
-            if (text.includes(patient.insuranceType)) {
-              matchedRow = row;
-              const firstTd = row.querySelector('td, th');
-              if (firstTd) {
-                combinationCode = firstTd.textContent.trim();
+            const tds = row.querySelectorAll('td');
+            if (tds.length >= 2) {
+              const rowIns = (tds[1] ? tds[1].textContent : "").trim();
+              const rowPub1 = (tds[2] ? tds[2].textContent : "").trim();
+              const rowPub2 = (tds[3] ? tds[3].textContent : "").trim();
+              const rowPub3 = (tds[4] ? tds[4].textContent : "").trim();
+
+              const targetIns = (patient.insuranceType || "").trim();
+              const targetPub1 = (patient.publicFund1 || "").trim();
+              const targetPub2 = (patient.publicFund2 || "").trim();
+              const targetPub3 = (patient.publicFund3 || "").trim();
+
+              if (rowIns === targetIns &&
+                  rowPub1 === targetPub1 &&
+                  rowPub2 === targetPub2 &&
+                  rowPub3 === targetPub3) {
+                matchedRow = row;
+                const firstTd = tds[0];
+                if (firstTd) {
+                  combinationCode = firstTd.textContent.trim();
+                }
+                break;
               }
-              break;
             }
           }
 
           if (matchedRow) {
-            this.log("合致する保険組合せを見つけました: [" + combinationCode + "] " + patient.insuranceType);
+            this.log("合致する保険組合せを見つけました: [" + combinationCode + "] " + combinationText);
             matchedRow.click();
             await this.sleep(300);
 
@@ -780,7 +850,7 @@
               await this.sleep(400);
             }
           } else {
-            this.log("警告: 保険区分「" + patient.insuranceType + "」がWebORCAの組合せリストに見つかりませんでした。", "error");
+            this.log("警告: 保険区分「" + combinationText + "」がWebORCAの組合せリストに見つかりませんでした。", "error");
           }
         }
       }

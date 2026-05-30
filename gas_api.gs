@@ -49,9 +49,20 @@ function doGet(e) {
       }
     }
 
+    // デバッグ情報をログに出力（GAS の実行ログで確認可）
+    Logger.log({
+      detectedColumns: {
+        id: colId,
+        insurance: colInsurance,
+        day: colDay,
+        cool: colCool
+      },
+      headerSample: headerRow.slice(0, 5)
+    });
+
     // デバッグパラメータが指定された場合はスプレッドシートの構造情報を返す
     if (e && e.parameter && e.parameter.debug === "1") {
-      return createJsonResponse({
+      const debugInfo = {
         status: "debug",
         message: "スプレッドシートの構造情報をダンプしました。",
         detectedColumns: {
@@ -63,7 +74,10 @@ function doGet(e) {
         patientHeaders: headerRow,
         patientSampleRow: patientData.length > 1 ? patientData[1] : null,
         doctorHeaders: doctorSheet.getDataRange().getValues()[0]
-      });
+      };
+      // 追加でログ出力して確認しやすくする
+      Logger.log(JSON.stringify(debugInfo, null, 2));
+      return createJsonResponse(debugInfo);
     }
 
     // クエリパラメータから曜日とクールを取得
@@ -150,9 +164,18 @@ function doGet(e) {
           const patientCool = (cool === "午前" || cool === "AM") ? "午前" : "午後";
           const assignedDoctor = doctorsMap[patientCool] || "未設定";
 
+          // J-M列 (インデックス 9, 10, 11, 12) の値を取得
+          const insVal = String(row[9] || "").trim();
+          const pub1Val = String(row[10] || "").trim();
+          const pub2Val = String(row[11] || "").trim();
+          const pub3Val = String(row[12] || "").trim();
+
           patients.push({
             patientId: patientId,
-            insuranceType: insuranceType,
+            insuranceType: insVal,
+            publicFund1: pub1Val,
+            publicFund2: pub2Val,
+            publicFund3: pub3Val,
             cool: patientCool,
             doctor: assignedDoctor
           });
