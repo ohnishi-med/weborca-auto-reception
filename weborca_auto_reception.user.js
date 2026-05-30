@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WebORCA 自動受付ツール
 // @namespace    http://tampermonkey.net/
-// @version      1.9
+// @version      2.0
 // @description  スプレッドシートから曜日・クールの患者リストを取得し、自動受付を行います (自動ログイン制御可能版)
 // @author       Tsuyoshi Ohnishi
 // @match        *://weborca.cloud.orcamo.jp/*
@@ -23,6 +23,9 @@
   // GAS APIのWebアプリURL（埋め込み済み）
   const GAS_API_URL = "https://script.google.com/macros/s/AKfycbypIiNLtxLDqVLFMt4A6-wf-_qy5tTun7sybU7Exe0NVvySMgnuUkukF7xbvOqBWd-TIA/exec";
   
+  // 参照する透析患者リストのスプレッドシートURL
+  const SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1yUgZgDLV1aJJHnmFmEgTBgXLYM34tkhfVezY25zO8Ew/edit?gid=0#gid=0";
+
   // 各操作のウェイト時間（ミリ秒）
   const WAIT_MS = 1000; 
 
@@ -171,6 +174,32 @@
       transform: none;
       box-shadow: none;
     }
+    .reception-btn-link {
+      width: 100%;
+      padding: 10px;
+      border: 1px solid #0d9488;
+      border-radius: 8px;
+      background: transparent;
+      color: #0f766e;
+      font-weight: 600;
+      font-size: 13px;
+      cursor: pointer;
+      transition: all 0.2s;
+      margin-top: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      box-sizing: border-box;
+      text-decoration: none;
+    }
+    .reception-btn-link:hover {
+      background: rgba(13, 148, 136, 0.08);
+      transform: translateY(-1px);
+    }
+    .reception-btn-link:active {
+      transform: translateY(0);
+    }
     #reception-status {
       margin-top: 15px;
       padding: 10px;
@@ -294,6 +323,14 @@
         <button class="reception-btn-primary" id="reception-start-today" style="background: linear-gradient(135deg, #0f766e 0%, #115e59 100%); margin-top: 6px;">
           本日分（全クール）を受付
         </button>
+        <button class="reception-btn-link" id="reception-open-sheet" style="margin-top: 6px;">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+            <polyline points="15 3 21 3 21 9"></polyline>
+            <line x1="10" y1="14" x2="21" y2="3"></line>
+          </svg>
+          透析患者リスト
+        </button>
         <button class="reception-btn-secondary" id="reception-stop">
           一時停止/中断
         </button>
@@ -341,6 +378,16 @@
 
       this.startBtn.addEventListener('click', () => this.startProcess());
       this.startTodayBtn.addEventListener('click', () => this.startProcess("all"));
+      const openSheetBtn = div.querySelector('#reception-open-sheet');
+      if (openSheetBtn) {
+        openSheetBtn.addEventListener('click', () => {
+          if (SPREADSHEET_URL.includes("YOUR_SPREADSHEET_ID")) {
+            alert("スプレッドシートのURLを設定してください。スクリプトの設定エリアにある SPREADSHEET_URL を編集してください。");
+          } else {
+            window.open(SPREADSHEET_URL, '_blank');
+          }
+        });
+      }
       this.stopBtn.addEventListener('click', () => this.stopProcess());
       this.minimizeBtn = div.querySelector('#reception-minimize');
       this.closeBtn = div.querySelector('#reception-close');
