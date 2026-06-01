@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WebORCA 自動受付ツール
 // @namespace    http://tampermonkey.net/
-// @version      2.1
+// @version      2.2
 // @description  スプレッドシートから曜日・クールの患者リストを取得し、自動受付を行います (自動ログイン制御可能版)
 // @author       Tsuyoshi Ohnishi
 // @match        *://weborca.cloud.orcamo.jp/*
@@ -941,13 +941,7 @@
           if (matchedRow) {
             this.log("合致する保険組合せを見つけました: [" + combinationCode + "] " + combinationText);
             matchedRow.click();
-            await this.sleep(300);
-
-            if (combinationCode) {
-              this.setInputValue(insuranceInput, combinationCode);
-              this.simulateEnter(insuranceInput);
-              await this.sleep(400);
-            }
+            await this.sleep(600);
           } else {
             // 保険組合せが見つからない場合は SkipPatientError をスローして次の患者へ進む
             throw new SkipPatientError(`保険公費組合せ「${combinationText}」がWebORCAのリストに存在しません`);
