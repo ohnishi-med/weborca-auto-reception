@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WebORCA 自動受付ツール
 // @namespace    http://tampermonkey.net/
-// @version      2.0
+// @version      2.1
 // @description  スプレッドシートから曜日・クールの患者リストを取得し、自動受付を行います (自動ログイン制御可能版)
 // @author       Tsuyoshi Ohnishi
 // @match        *://weborca.cloud.orcamo.jp/*
@@ -217,6 +217,17 @@
     .log-error { color: #e11d48; font-weight: bold; }
     .log-info { color: #2563eb; }
   `);
+
+  /**
+   * スキップ対象患者を示すカスタムエラー
+   * このエラーは自動処理を止めず、次の患者へ進む
+   */
+  class SkipPatientError extends Error {
+    constructor(message) {
+      super(message);
+      this.name = 'SkipPatientError';
+    }
+  }
 
   class WebOrcaAutoReception {
     constructor() {
@@ -486,6 +497,10 @@
         row.style.backgroundColor = 'rgba(254, 226, 226, 0.5)'; // 薄い赤色
         row.style.color = '#b91c1c';
         if (badge) badge.innerHTML = `<span style="color: #dc2626; font-weight: bold;" title="${extraMessage}">✗ 失敗</span>`;
+      } else if (status === 'skipped') {
+        row.style.backgroundColor = 'rgba(241, 245, 249, 0.8)'; // 薄いグレー
+        row.style.color = '#94a3b8';
+        if (badge) badge.innerHTML = `<span style="color: #64748b; font-weight: bold;" title="${extraMessage}">⏭ スキップ</span>`;
       }
     }
 
@@ -719,6 +734,8 @@
         }
 
         // 自動受付ループを実行
+        const skippedPatients = []; // スキップした患者の記録
+
         for (let i = 0; i < this.patientsQueue.length; i++) {
           if (this.isStopped) {
             this.log("一時停止されました。", "error");
@@ -734,19 +751,43 @@
             this.log(`成功: 患者ID ${patient.patientId}`, "success");
             this.setPreviewRowStatus(patient.patientId, 'success');
           } catch (patientErr) {
-            this.log(`失敗: 患者ID ${patient.patientId} - ${patientErr.message}`, "error");
-            this.setPreviewRowStatus(patient.patientId, 'error', patientErr.message);
-            this.isStopped = true;
-            this.log("安全のため自動処理を一時停止しました。再開する場合は再度開始ボタンを押してください。", "error");
-            break;
+            if (patientErr instanceof SkipPatientError) {
+              // 保険組合せ不一致など：次の患者へスキップ（処理停止しない）
+              this.log(`⏭ スキップ: 患者ID ${patient.patientId} - ${patientErr.message}`, "error");
+              this.setPreviewRowStatus(patient.patientId, 'skipped', patientErr.message);
+              skippedPatients.push({ patientId: patient.patientId, reason: patientErr.message });
+              // スキップ後もWebORCAの入力をクリア（次の患者ID入力のため）
+              await this.sleep(300);
+            } else {
+              // 予期せぬエラー：安全のため処理停止
+              this.log(`失敗: 患者ID ${patient.patientId} - ${patientErr.message}`, "error");
+              this.setPreviewRowStatus(patient.patientId, 'error', patientErr.message);
+              this.isStopped = true;
+              this.log("安全のため自動処理を一時停止しました。再開する場合は再度開始ボタンを押してください。", "error");
+              break;
+            }
           }
         }
 
+        // 完了後のサマリー表示
         if (!this.isStopped) {
           this.log("すべての患者の受付処理が完了しました！", "success");
           this.clearSessionState();
         } else {
           this.clearSessionState();
+        }
+
+        // スキップ患者がいた場合はアラートで詳細を表示
+        if (skippedPatients.length > 0) {
+          const skipLines = skippedPatients
+            .map((s, idx) => `  ${idx + 1}. 患者ID: ${s.patientId}\n     理由: ${s.reason}`)
+            .join('\n');
+          alert(
+            `⚠️ スキップされた患者: ${skippedPatients.length}件\n\n` +
+            `${skipLines}\n\n` +
+            `これらの患者の保険公費組合せがWebORCAのリストに見つかりませんでした。\n` +
+            `スプレッドシートの保険・公費の入力内容とWebORCAの登録内容を確認してください。`
+          );
         }
 
       } catch (err) {
@@ -844,35 +885,46 @@
       }
 
       // 3. 保険区分（保険組合せ）の選択
-      if (patient.insuranceType) {
-        const combinationText = `${patient.insuranceType}` + 
-                                `${patient.publicFund1 ? ' ' + patient.publicFund1 : ''}` + 
-                                `${patient.publicFund2 ? ' ' + patient.publicFund2 : ''}` + 
-                                `${patient.publicFund3 ? ' ' + patient.publicFund3 : ''}`;
+      // ※ 主保険が空（生活保護など公費のみ患者）でも公費が存在すれば選択する
+      if (patient.insuranceType || patient.publicFund1 || patient.publicFund2 || patient.publicFund3) {
+        // 組合せテキストを生成（主保険が空の場合は先頭スペースを除去）
+        const combinationText = [
+          patient.insuranceType || "",
+          patient.publicFund1 || "",
+          patient.publicFund2 || "",
+          patient.publicFund3 || ""
+        ].filter(v => v !== "").join(' ');
 
         this.log(`保険公費組合せ「${combinationText}」を探しています...`);
         const table = document.querySelector(SELECTORS.insuranceTable);
         const insuranceInput = document.querySelector(SELECTORS.insuranceInput);
         
         if (table && insuranceInput) {
-          const rows = table.querySelectorAll('tbody tr');
+          // WebORCAが <tbody> を持たないケースにも対応するフォールバック
+          let rows = table.querySelectorAll('tbody tr');
+          if (rows.length === 0) {
+            rows = table.querySelectorAll('tr');
+            this.log("tbody なしのテーブルを検出。直接 tr を検索します。", "info");
+          }
           let matchedRow = null;
           let combinationCode = "";
 
           for (let row of rows) {
             const tds = row.querySelectorAll('td');
             if (tds.length >= 2) {
-              const rowIns = (tds[1] ? tds[1].textContent : "").trim();
-              const rowPub1 = (tds[2] ? tds[2].textContent : "").trim();
-              const rowPub2 = (tds[3] ? tds[3].textContent : "").trim();
-              const rowPub3 = (tds[4] ? tds[4].textContent : "").trim();
+              // 全角スペース・ノーブレークスペース・改行などを正規化してから比較
+              const normalize = (str) => (str || "").replace(/[\u00a0\u3000]/g, ' ').trim();
+              const rowIns  = normalize(tds[1] ? tds[1].textContent : "");
+              const rowPub1 = normalize(tds[2] ? tds[2].textContent : "");
+              const rowPub2 = normalize(tds[3] ? tds[3].textContent : "");
+              const rowPub3 = normalize(tds[4] ? tds[4].textContent : "");
 
-              const targetIns = (patient.insuranceType || "").trim();
-              const targetPub1 = (patient.publicFund1 || "").trim();
-              const targetPub2 = (patient.publicFund2 || "").trim();
-              const targetPub3 = (patient.publicFund3 || "").trim();
+              const targetIns  = normalize(patient.insuranceType);
+              const targetPub1 = normalize(patient.publicFund1);
+              const targetPub2 = normalize(patient.publicFund2);
+              const targetPub3 = normalize(patient.publicFund3);
 
-              if (rowIns === targetIns &&
+              if (rowIns  === targetIns  &&
                   rowPub1 === targetPub1 &&
                   rowPub2 === targetPub2 &&
                   rowPub3 === targetPub3) {
@@ -897,7 +949,8 @@
               await this.sleep(400);
             }
           } else {
-            this.log("警告: 保険区分「" + combinationText + "」がWebORCAの組合せリストに見つかりませんでした。", "error");
+            // 保険組合せが見つからない場合は SkipPatientError をスローして次の患者へ進む
+            throw new SkipPatientError(`保険公費組合せ「${combinationText}」がWebORCAのリストに存在しません`);
           }
         }
       }
