@@ -548,6 +548,26 @@
       return el.style.display !== 'none' && !el.classList.contains('hidden');
     }
 
+    toggleMinimize() {
+      if (this.isMinimized) {
+        this.bodyContainer.style.display = 'block';
+        this.minimizeBtn.innerHTML = '&#x2212;'; // ➖
+        this.minimizeBtn.title = '最小化';
+        this.isMinimized = false;
+      } else {
+        this.bodyContainer.style.display = 'none';
+        this.minimizeBtn.innerHTML = '&#xff0b;'; // ➕
+        this.minimizeBtn.title = '元に戻す';
+        this.isMinimized = true;
+      }
+    }
+
+    closePanel() {
+      if (confirm("自動受付パネルを閉じますか？（ページを再読み込みすると再度表示されます）")) {
+        this.panel.style.display = 'none';
+      }
+    }
+
     /**
      * 現在の画面IDを取得する
      */

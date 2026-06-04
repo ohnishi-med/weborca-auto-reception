@@ -83,6 +83,16 @@ function doGet(e) {
     // クエリパラメータから曜日とクールを取得
     let targetDay = e && e.parameter && e.parameter.day;
     let targetCool = e && e.parameter && e.parameter.cool; // "午前", "午後", "all", "AM", "PM"
+    
+    // クエリパラメータから日付を取得 (例: "20260603" など)
+    let targetDateStr = e && e.parameter && e.parameter.date;
+    let targetDate = new Date();
+    if (targetDateStr && /^\d{8}$/.test(targetDateStr)) {
+      const y = parseInt(targetDateStr.substring(0, 4));
+      const m = parseInt(targetDateStr.substring(4, 6)) - 1;
+      const d = parseInt(targetDateStr.substring(6, 8));
+      targetDate = new Date(y, m, d);
+    }
 
     // 曜日の表記ゆらぎ吸収用の検索文字定義 (例: "水曜日" -> "水")
     let searchDay = targetDay;
@@ -92,14 +102,12 @@ function doGet(e) {
 
     // パラメータ未指定時の自動判定ロジック
     if (!targetDay || !targetCool) {
-      const now = new Date();
-      
-      // 日本時間の曜日判定 (0:日, 1:月, 2:火, 3:水, 4:木, 5:金, 6:土)
+      // 指定の日付から曜日を判定 (0:日, 1:月, 2:火, 3:水, 4:木, 5:金, 6:土)
       const dayNames = ["日", "月", "火", "水", "木", "金", "土"];
-      const currentDay = dayNames[now.getDay()];
+      const currentDay = dayNames[targetDate.getDay()];
 
       // クール判定 (13:00以前は午前、それ以降は午後とする)
-      const currentHour = now.getHours();
+      const currentHour = targetDate.getHours();
       const currentCool = currentHour < 13 ? "午前" : "午後";
 
       if (!targetDay) {
@@ -170,6 +178,15 @@ function doGet(e) {
           const pub2Val = String(row[11] || "").trim();
           const pub3Val = String(row[12] || "").trim();
 
+          // N, O列 (インデックス 13, 14) の値を取得 (デジカル用カルテテキスト・コスト)
+          const digikarKarteVal = String(row[13] || "").trim();
+          let digikarCostVal = String(row[14] || "").trim();
+
+          // スプレッドシートが空欄の場合、自動判定されたセット名を割り当て
+          if (!digikarCostVal) {
+            digikarCostVal = determineSet(targetDate, patientCool);
+          }
+
           patients.push({
             patientId: patientId,
             insuranceType: insVal,
@@ -177,7 +194,9 @@ function doGet(e) {
             publicFund2: pub2Val,
             publicFund3: pub3Val,
             cool: patientCool,
-            doctor: assignedDoctor
+            doctor: assignedDoctor,
+            digikarKarte: digikarKarteVal,
+            digikarCost: digikarCostVal
           });
         }
       }
@@ -205,6 +224,26 @@ function doGet(e) {
       status: "error",
       message: error.toString()
     });
+  }
+}
+
+/**
+ * 実行日付とクールから自動入力用のセット名を算出します。
+ */
+function determineSet(date, cool) {
+  const dayNum = date.getDate();
+  const dayOfWeek = date.getDay(); // 0:日, 1:月, 2:火, 3:水, 4:木, 5:金, 6:土
+
+  // 1. 初回判定 (第1月曜日[1] または 第1火曜日[2] = 日付が7以下で曜日が月火)
+  const isFirstMonOrTue = (dayNum <= 7) && (dayOfWeek === 1 || dayOfWeek === 2);
+  
+  // 2. 土曜午後判定
+  const isSatPM = (dayOfWeek === 6) && (cool === "午後" || cool === "PM");
+
+  if (isFirstMonOrTue) {
+    return isSatPM ? "auto_HD_月初回_土曜午後" : "auto_HD_月初回_通常";
+  } else {
+    return isSatPM ? "auto_HD_土曜午後" : "auto_HD_通常";
   }
 }
 
