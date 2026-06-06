@@ -5,8 +5,11 @@
 // @description  デジカル受付画面から透析患者カルテへ順次遷移し、セット適用・一時保存・帰還を自動ループ処理します
 // @author       Antigravity
 // @match        https://*.digikar.jp/reception/*
+// @match        https://digikar.jp/reception/*
 // @match        https://*.digikar.jp/karte/*
+// @match        https://digikar.jp/karte/*
 // @match        https://*.digikar.jp/patients/*
+// @match        https://digikar.jp/patients/*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_setValue
 // @grant        GM_getValue
@@ -15,7 +18,7 @@
 // @run-at       document-idle
 // ==/UserScript==
 
-(function() {
+(function () {
     'use strict';
 
     console.log("Digikar Auto Input Loop Script Loaded");
@@ -23,10 +26,10 @@
     // ================= 設定エリア =================
     // GAS APIのWebアプリURL（WebORCA自動受付と共通）
     const GAS_API_URL = "https://script.google.com/macros/s/AKfycbypIiNLtxLDqVLFMt4A6-wf-_qy5tTun7sybU7Exe0NVvySMgnuUkukF7xbvOqBWd-TIA/exec";
-    
+
     // 各操作のウェイト時間（ミリ秒）
     const WAIT_MS = 1500;
-    
+
     // カルテ保存の処理種別 ("送信" または "一時保存" または "保存")
     const SAVE_TYPE = "送信";
     // =============================================
@@ -216,12 +219,24 @@
             this.startBtn = null;
             this.stopBtn = null;
 
-            this.isActive = sessionStorage.getItem(KEY_ACTIVE) === 'true';
-            this.patients = JSON.parse(sessionStorage.getItem(KEY_PATIENTS) || '[]');
-            this.currentIndex = parseInt(sessionStorage.getItem(KEY_INDEX) || '0');
+            this.isActive = localStorage.getItem(KEY_ACTIVE) === 'true';
+            this.patients = JSON.parse(localStorage.getItem(KEY_PATIENTS) || '[]');
+            this.currentIndex = parseInt(localStorage.getItem(KEY_INDEX) || '0');
+            this.lastProcessedUrl = '';
 
             this.initUI();
             this.checkCurrentPage();
+
+            // SPA (シングルページアプリケーション) のURL遷移監視
+            this.lastUrl = window.location.href;
+            this.urlCheckInterval = setInterval(() => {
+                const currentUrl = window.location.href;
+                if (currentUrl !== this.lastUrl) {
+                    console.log(`[DigikarAutoInput] URL change detected: ${this.lastUrl} -> ${currentUrl}`);
+                    this.lastUrl = currentUrl;
+                    this.checkCurrentPage();
+                }
+            }, 500);
         }
 
         initUI() {
@@ -272,18 +287,12 @@
             const closeBtn = div.querySelector('#digikar-auto-close');
             const contentArea = div.querySelector('#digikar-auto-content');
 
-            // 最小化状態の復元 (sessionStorageに保存)
-            const isMinimized = sessionStorage.getItem('digikar_panel_minimized') === 'true';
+            // 最小化状態の復元 (localStorageに保存)
+            const isMinimized = localStorage.getItem('digikar_panel_minimized') === 'true';
             if (isMinimized) {
                 contentArea.style.display = 'none';
                 minimizeBtn.innerText = '➕';
                 minimizeBtn.title = '元に戻す';
-            }
-
-            // 閉じた状態の復元 (sessionStorageに保存)
-            const isClosed = sessionStorage.getItem('digikar_panel_closed') === 'true';
-            if (isClosed) {
-                div.style.display = 'none';
             }
 
             minimizeBtn.addEventListener('click', (e) => {
@@ -293,12 +302,12 @@
                     contentArea.style.display = 'block';
                     minimizeBtn.innerText = '➖';
                     minimizeBtn.title = '最小化';
-                    sessionStorage.setItem('digikar_panel_minimized', 'false');
+                    localStorage.setItem('digikar_panel_minimized', 'false');
                 } else {
                     contentArea.style.display = 'none';
                     minimizeBtn.innerText = '➕';
                     minimizeBtn.title = '元に戻す';
-                    sessionStorage.setItem('digikar_panel_minimized', 'true');
+                    localStorage.setItem('digikar_panel_minimized', 'true');
                 }
             });
 
@@ -306,7 +315,6 @@
                 e.stopPropagation();
                 if (confirm("一括セット入力パネルを閉じますか？（ページを再読み込みすると再度表示されます）")) {
                     div.style.display = 'none';
-                    sessionStorage.setItem('digikar_panel_closed', 'true');
                 }
             });
 
@@ -332,6 +340,59 @@
 
             this.startBtn.addEventListener('click', () => this.startLoop());
             this.stopBtn.addEventListener('click', () => this.stopLoop());
+
+            // ドラッグ＆ドロップ機能の実装
+            const header = div.querySelector('h4');
+            header.style.cursor = 'move';
+
+            let isDragging = false;
+            let startX, startY;
+            let initialX, initialY;
+
+            // 初期位置を復元
+            const savedTop = localStorage.getItem('digikar_panel_top');
+            const savedLeft = localStorage.getItem('digikar_panel_left');
+            if (savedTop !== null && savedLeft !== null) {
+                div.style.top = savedTop;
+                div.style.left = savedLeft;
+                div.style.right = 'auto'; // 右端固定を解除
+            }
+
+            header.addEventListener('mousedown', (e) => {
+                if (e.target.closest('.digikar-panel-btn')) return; // ボタンをクリックしたときはドラッグしない
+                isDragging = true;
+                
+                // 現在のスタイル座標を取得
+                const rect = div.getBoundingClientRect();
+                startX = e.clientX;
+                startY = e.clientY;
+                initialX = rect.left;
+                initialY = rect.top;
+
+                // テキスト選択を防ぐ
+                e.preventDefault();
+            });
+
+            document.addEventListener('mousemove', (e) => {
+                if (!isDragging) return;
+                const dx = e.clientX - startX;
+                const dy = e.clientY - startY;
+                
+                const newLeft = initialX + dx;
+                const newTop = initialY + dy;
+
+                div.style.left = `${newLeft}px`;
+                div.style.top = `${newTop}px`;
+                div.style.right = 'auto';
+            });
+
+            document.addEventListener('mouseup', () => {
+                if (isDragging) {
+                    isDragging = false;
+                    localStorage.setItem('digikar_panel_top', div.style.top);
+                    localStorage.setItem('digikar_panel_left', div.style.left);
+                }
+            });
 
             if (this.isActive) {
                 this.updateUIActive(true);
@@ -372,7 +433,7 @@
             const pathParts = window.location.pathname.split('/');
             const dateStr = pathParts[pathParts.length - 1]; // "20260603" など
             let targetDay = "";
-            
+
             if (/^\d{8}$/.test(dateStr)) {
                 const y = parseInt(dateStr.substring(0, 4));
                 const m = parseInt(dateStr.substring(4, 6)) - 1;
@@ -408,48 +469,57 @@
                                 targetDate = new Date(y, m, d);
                             }
 
-                             const determineSetJS = (date, cool) => {
-                                 const dayNum = date.getDate();
-                                 const dayOfWeek = date.getDay(); // 0:日, 1:月, 2:火, 3:水, 4:木, 5:金, 6:土
-                                 const isFirstMonOrTue = (dayNum <= 7) && (dayOfWeek === 1 || dayOfWeek === 2);
-                                 
-                                 // クールの表記揺れや文字化け（例：ߌ, PM, pm 等）への頑健な対応
-                                 const coolStr = String(cool || "").toLowerCase();
-                                 const isPM = coolStr.indexOf("後") !== -1 || coolStr.indexOf("p") !== -1 || coolStr.indexOf("pm") !== -1;
-                                 
-                                 const isSatPM = (dayOfWeek === 6) && isPM;
-                                 if (isFirstMonOrTue) {
-                                     return isSatPM ? "auto_HD_月初回_土曜午後" : "auto_HD_月初回_通常";
-                                 } else {
-                                     return isSatPM ? "auto_HD_土曜午後" : "auto_HD_通常";
-                                 }
-                             };
+                            const determineSetJS = (date, cool) => {
+                                const dayNum = date.getDate();
+                                const dayOfWeek = date.getDay(); // 0:日, 1:月, 2:火, 3:水, 4:木, 5:金, 6:土
+                                const isFirstMonOrTue = (dayNum <= 7) && (dayOfWeek === 1 || dayOfWeek === 2);
+
+                                // クールの表記揺れや文字化け（例：ߌ, PM, pm 等）への頑健な対応
+                                const coolStr = String(cool || "").toLowerCase();
+                                const isPM = coolStr.indexOf("後") !== -1 || coolStr.indexOf("p") !== -1 || coolStr.indexOf("pm") !== -1;
+
+                                const isSatPM = (dayOfWeek === 6) && isPM;
+                                if (isFirstMonOrTue) {
+                                    return isSatPM ? "auto_HD_月初回_土曜午後" : "auto_HD_月初回_通常";
+                                } else {
+                                    return isSatPM ? "auto_HD_土曜午後" : "auto_HD_通常";
+                                }
+                            };
 
                             // デジカル自動入力の対象患者（IDが存在する患者）を抽出・補完
                             const targetPatients = json.patients
                                 .filter(p => p.patientId)
                                 .map(p => {
-                                    // digikarCost が無い場合は JavaScript 側で自動判定して割り当てる
-                                    if (!p.digikarCost) {
-                                        p.digikarCost = determineSetJS(targetDate, p.cool);
+                                    const baseSet = determineSetJS(targetDate, p.cool);
+                                    if (p.digikarCost) {
+                                        const costStr = String(p.digikarCost).trim();
+                                        if (costStr.startsWith("auto_HD_")) {
+                                            p.digikarCostCandidates = [costStr];
+                                        } else {
+                                            // 氏名などの個別指定がある場合、baseSet + 個別指定を第一候補、baseSetを第二候補とする
+                                            p.digikarCostCandidates = [baseSet + costStr, baseSet];
+                                        }
+                                    } else {
+                                        p.digikarCostCandidates = [baseSet];
                                     }
+                                    // 互換性のため p.digikarCost にも第一候補をセットしておく
+                                    p.digikarCost = p.digikarCostCandidates[0];
                                     return p;
                                 });
-                            
+
                             if (targetPatients.length === 0) {
                                 this.log("対象となる透析患者データ（患者IDあり）が存在しません。");
                                 this.stopLoop();
                                 return;
                             }
-
                             this.patients = targetPatients;
                             this.currentIndex = 0;
                             this.isActive = true;
 
-                            sessionStorage.setItem(KEY_ACTIVE, 'true');
-                            sessionStorage.setItem(KEY_PATIENTS, JSON.stringify(targetPatients));
-                            sessionStorage.setItem(KEY_INDEX, '0');
-                            sessionStorage.setItem(KEY_RECEPTION_URL, window.location.href);
+                            localStorage.setItem(KEY_ACTIVE, 'true');
+                            localStorage.setItem(KEY_PATIENTS, JSON.stringify(targetPatients));
+                            localStorage.setItem(KEY_INDEX, '0');
+                            localStorage.setItem(KEY_RECEPTION_URL, window.location.href);
 
                             this.log(`対象患者: ${this.patients.length}件の処理を開始します。`);
                             this.processNextPatientAtReception();
@@ -471,10 +541,11 @@
 
         stopLoop() {
             this.isActive = false;
-            sessionStorage.removeItem(KEY_ACTIVE);
-            sessionStorage.removeItem(KEY_PATIENTS);
-            sessionStorage.removeItem(KEY_INDEX);
-            sessionStorage.removeItem(KEY_RECEPTION_URL);
+            this.lastProcessedUrl = '';
+            localStorage.removeItem(KEY_ACTIVE);
+            localStorage.removeItem(KEY_PATIENTS);
+            localStorage.removeItem(KEY_INDEX);
+            localStorage.removeItem(KEY_RECEPTION_URL);
             this.updateUIActive(false);
             this.log("自動処理を停止しました。");
         }
@@ -493,17 +564,29 @@
             this.log(`[進捗 ${this.currentIndex + 1}/${this.patients.length}] 患者ID: ${patient.patientId} を探索中...`);
 
             await sleep(1000);
-            
+
             // 患者IDを受付画面のHTMLから探索してクリック
             const patientLink = this.findPatientLink(patient.patientId);
 
             if (patientLink) {
                 this.log(`患者ID ${patient.patientId} のカルテリンクをクリックして遷移します。`);
+
+                // 別タブで開くのを防止し、同一タブで遷移させる
+                if (patientLink.tagName === 'A') {
+                    patientLink.target = '_self';
+                    const href = patientLink.getAttribute('href');
+                    if (href) {
+                        console.log(`[DigikarAutoInput] Same tab navigation to: ${href}`);
+                        window.location.href = href;
+                        return;
+                    }
+                }
+
                 patientLink.click();
             } else {
                 this.log(`⚠️ 受付画面内に患者ID ${patient.patientId} が見つかりませんでした。スキップして次へ進みます。`);
                 this.currentIndex++;
-                sessionStorage.setItem(KEY_INDEX, this.currentIndex.toString());
+                localStorage.setItem(KEY_INDEX, this.currentIndex.toString());
                 this.processNextPatientAtReception();
             }
         }
@@ -547,9 +630,11 @@
         // カルテ画面での処理
         // ==========================================
         async processKartePage() {
+            console.log(`[DigikarAutoInput] processKartePage started. isActive: ${this.isActive}`);
             if (!this.isActive) return;
 
             const patient = this.patients[this.currentIndex];
+            console.log(`[DigikarAutoInput] current patient index: ${this.currentIndex}`, patient);
             if (!patient) {
                 this.log("患者情報が見つかりません。ループを終了します。");
                 this.stopLoop();
@@ -557,18 +642,22 @@
             }
 
             this.log(`カルテ画面をロードしました。患者ID: ${patient.patientId} (セット: ${patient.digikarCost})`);
+            console.log(`[DigikarAutoInput] Cost candidates:`, patient.digikarCostCandidates);
 
             // 安全性検証：現在開いているカルテの患者IDと、処理対象IDが一致するかチェック
             const currentPatientId = await this.getCurrentPatientIdFromKarte();
+            console.log(`[DigikarAutoInput] Checked current patient ID from screen: ${currentPatientId}`);
             if (currentPatientId) {
                 const clean = (id) => (id || "").replace(/^0+/, '').trim();
                 if (clean(currentPatientId) !== clean(patient.patientId)) {
                     this.log(`🚨 安全警告: 開いたカルテID(${currentPatientId})と対象ID(${patient.patientId})が不一致です。処理を停止します。`);
+                    console.error(`[DigikarAutoInput] Patient ID mismatch. Expected: ${patient.patientId}, Actual: ${currentPatientId}`);
                     this.stopLoop();
                     return;
                 }
             } else {
                 this.log("カルテIDの検証をスキップします (ID取得失敗)。");
+                console.warn("[DigikarAutoInput] Could not retrieve patient ID from the page header.");
             }
 
             // 1. カルテエディタ（Tiptap/ProseMirror）への入力 (カルテ記述指定があれば)
@@ -585,44 +674,89 @@
             }
 
             // 2. セットの自動入力
-            if (patient.digikarCost) {
+            const candidates = patient.digikarCostCandidates || (patient.digikarCost ? [patient.digikarCost] : []);
+            console.log(`[DigikarAutoInput] Set candidates count: ${candidates.length}, list:`, candidates);
+            if (candidates.length > 0) {
                 this.log(`右パネルの「セット」タブをクリックします...`);
                 // 右パネルのセットタブを探してクリック
                 const tabs = Array.from(document.querySelectorAll('li, div, button'));
-                const setTab = tabs.find(el => el.innerText.trim() === 'セット');
+                console.log(`[DigikarAutoInput] Looking for set tab in ${tabs.length} elements...`);
+                const setTab = tabs.find(el => el.innerText && el.innerText.trim() === 'セット');
                 if (setTab) {
+                    console.log(`[DigikarAutoInput] Found set tab element. Clicking:`, setTab);
                     setTab.click();
                     await sleep(1000);
                 } else {
                     this.log("⚠️ 「セット」タブが見つかりませんでした。そのまま要素を検索します。");
+                    console.warn(`[DigikarAutoInput] "セット" tab not found in the tabs list.`);
                 }
 
-                this.log(`対象セット「${patient.digikarCost}」を画面上で探索中...`);
-                // まずフォルダ展開を行わずに目的のセットを探す（アコーディオンが既に展開されている場合）
-                let matchedSetElement = await this.findSetElement(patient.digikarCost, 2000);
-                
+                this.log(`対象セット候補「${candidates.join(', ')}」を画面上で探索中...`);
+                let matchedSetElement = null;
+                let appliedSetName = "";
+
+                // 候補順にセットを探索（フォルダ展開前に見つかるか試す）
+                for (const setName of candidates) {
+                    console.log(`[DigikarAutoInput] Searching for "${setName}" before expanding folder...`);
+                    matchedSetElement = await this.findSetElement(setName, 1500);
+                    if (matchedSetElement) {
+                        appliedSetName = setName;
+                        console.log(`[DigikarAutoInput] Set "${setName}" found before expansion!`);
+                        break;
+                    }
+                }
+
                 if (!matchedSetElement) {
                     // 見つからない場合、アコーディオンが閉じている可能性があるので、フォルダを展開
                     const folderName = GM_getValue('digikar_folder_name', '透析回診');
-                    this.log(`セットが見つかりません。フォルダ「${folderName}」の展開を試みます...`);
-                    const accordion = await this.findAccordionHeader(folderName);
-                    if (accordion) {
-                        accordion.click();
-                        this.log(`フォルダ「${folderName}」をクリックしました。展開を待機します...`);
-                        await sleep(1200); // 展開アニメーションを考慮
-                        // 再度セットを検索（タイムアウト5秒）
-                        matchedSetElement = await this.findSetElement(patient.digikarCost, 5000);
-                    } else {
-                        this.log(`⚠️ 設定されたフォルダ「${folderName}」が見つかりませんでした。`);
+                    this.log(`セットが見つかりません。フォルダ「${folderName}」の多階層展開を試みます...`);
+                    console.log(`[DigikarAutoInput] Set not found in current view. Starting multi-depth folder expansion for: "${folderName}"`);
+                    
+                    // 最大3階層までアコーディオン展開を繰り返す
+                    for (let depth = 0; depth < 3; depth++) {
+                        console.log(`[DigikarAutoInput] Folder expansion depth ${depth + 1}...`);
+                        const accordions = await this.findAllAccordionHeaders(folderName);
+                        
+                        if (accordions.length > 0) {
+                            console.log(`[DigikarAutoInput] Found ${accordions.length} matching folders at depth ${depth + 1}. Clicking...`);
+                            for (let i = 0; i < accordions.length; i++) {
+                                console.log(`[DigikarAutoInput] Clicking folder element:`, accordions[i]);
+                                accordions[i].click();
+                                await sleep(1000); // 展開アニメーションを待つ
+                            }
+                            
+                            // 展開した段階でセットが見つかるか中間チェック
+                            console.log(`[DigikarAutoInput] Middle check for set items at depth ${depth + 1}...`);
+                            for (const setName of candidates) {
+                                matchedSetElement = await this.findSetElement(setName, 1500);
+                                if (matchedSetElement) {
+                                    appliedSetName = setName;
+                                    break;
+                                }
+                            }
+                            if (matchedSetElement) {
+                                console.log(`[DigikarAutoInput] Set successfully found at depth ${depth + 1}!`);
+                                break;
+                            }
+                        } else {
+                            console.log(`[DigikarAutoInput] No matching folders found at depth ${depth + 1}. Ending depth loop.`);
+                            break;
+                        }
+                    }
+                    
+                    if (!matchedSetElement) {
+                        this.log(`⚠️ フォルダ「${folderName}」をすべて展開しましたが、セットが見つかりませんでした。`);
                     }
                 }
 
                 if (matchedSetElement) {
+                    console.log(`[DigikarAutoInput] Clicking matched set element:`, matchedSetElement);
                     matchedSetElement.click();
-                    this.log(`セット「${patient.digikarCost}」を適用しました。`);
+                    this.log(`セット「${appliedSetName}」を適用しました。`);
                     await sleep(WAIT_MS);
                 } else {
-                    this.log(`❌ セット「${patient.digikarCost}」が画面上に見つかりませんでした。`);
+                    this.log(`❌ セット候補「${candidates.join(', ')}」が画面上に見つかりませんでした。`);
+                    console.error(`[DigikarAutoInput] Failed to find any set from candidates:`, candidates);
                     this.log("安全のため、ここで一時停止します。手動で入力して完了させてください。");
                     this.stopLoop();
                     return;
@@ -631,15 +765,48 @@
 
             // 3. 保存処理
             this.log(`カルテの「${SAVE_TYPE}」ボタンをクリックします...`);
-            const buttons = Array.from(document.querySelectorAll('button'));
-            const saveBtn = buttons.find(b => b.innerText.trim() === SAVE_TYPE || b.innerText.trim() === "送信" || b.innerText.trim() === "保存" || b.innerText.trim() === "一時保存");
+            const buttons = Array.from(document.querySelectorAll('button:not(#digikar-auto-panel *), [role="button"]:not(#digikar-auto-panel *), a:not(#digikar-auto-panel *)'));
+            console.log(`[DigikarAutoInput] Searching for save/send button in ${buttons.length} elements...`);
             
+            const saveBtn = buttons.find(b => {
+                // 1. title属性やaria-label、data-tooltipに「送信」「保存」等が含まれているかチェック
+                const titleText = (b.title || b.getAttribute('aria-label') || b.getAttribute('data-tooltip') || "").trim();
+                if (titleText.includes(SAVE_TYPE) || titleText.includes("送信") || titleText.includes("保存")) {
+                    console.log(`[DigikarAutoInput] Matched send button by title/aria-label: "${titleText}"`, b);
+                    return true;
+                }
+
+                const text = (b.innerText || "").replace(/[\s　\r\n]/g, ''); // 空白や改行を完全除去
+                if (text.length > 0 && text.length < 15) {
+                    // SAVE_TYPE ("送信") や一般的なキーワードを部分一致で検索
+                    if (text.includes(SAVE_TYPE) || text.includes("送信") || text.includes("保存") || text.includes("一時保存")) {
+                        return true;
+                    }
+                }
+                // テキストがない場合でも、特定の送信アイコンSVGを持つボタンを検出
+                const svgPath = b.querySelector('svg path');
+                if (svgPath) {
+                    const d = svgPath.getAttribute('d') || '';
+                    if (d.startsWith('M4.65 4') || d.includes('M4.65 4h4.905')) {
+                        console.log(`[DigikarAutoInput] Matched send button by SVG path signature:`, b);
+                        return true;
+                    }
+                }
+                return false;
+            });
+
             if (saveBtn) {
+                console.log(`[DigikarAutoInput] Found save button: "${saveBtn.innerText.trim()}"`, saveBtn);
                 saveBtn.click();
                 await sleep(800); // ポップアップ出現までの遅延
-                
+
                 // 確認ポップアップの自動処理
                 await this.clickConfirmPopupSendButton();
+                
+                // 処理成功として次の患者に進む
+                this.currentIndex++;
+                localStorage.setItem(KEY_INDEX, this.currentIndex.toString());
+                
                 this.log(`送信処理を実行しました。遷移を待ちます...`);
                 await sleep(WAIT_MS * 1.5);
             } else {
@@ -650,7 +817,7 @@
 
             // 4. 受付画面へ戻る
             this.log("受付画面に戻ります。");
-            const receptionUrl = sessionStorage.getItem(KEY_RECEPTION_URL);
+            const receptionUrl = localStorage.getItem(KEY_RECEPTION_URL);
             if (receptionUrl) {
                 window.location.href = receptionUrl;
             } else {
@@ -670,37 +837,78 @@
             return null;
         }
 
-        async findAccordionHeader(folderName) {
+        async findAllAccordionHeaders(folderName) {
             const normalize = (str) => (str || "").replace(/[\s　]/g, '').toLowerCase();
             const targetNorm = normalize(folderName);
-            
-            // アコーディオンのフォルダ名部分を探索
+            console.log(`[DigikarAutoInput] findAllAccordionHeaders: searching for "${folderName}" (normalized: "${targetNorm}")`);
+
             const elements = Array.from(document.querySelectorAll('div, span, button, p, a'));
+            const results = [];
+
+            // 1. 完全一致する最も内側の要素を最優先で収集
             for (let el of elements) {
-                const text = el.innerText.trim();
-                if (normalize(text).includes(targetNorm) && text.length > 0) {
-                    return el;
+                const text = el.innerText ? el.innerText.trim() : "";
+                if (normalize(text) === targetNorm) {
+                    // 子要素に同じテキストを持つ子ノードがないか確認し、最も内側の要素だけを収集
+                    const children = Array.from(el.querySelectorAll('div, span, p, a'));
+                    const hasChildWithSameText = children.some(child => normalize(child.innerText || "").trim() === targetNorm);
+                    if (!hasChildWithSameText) {
+                        results.push(el);
+                    }
                 }
             }
-            return null;
+
+            if (results.length > 0) {
+                console.log(`[DigikarAutoInput] Perfect match elements found: ${results.length}`, results);
+                return results;
+            }
+
+            // 2. 部分一致でテキスト長が短い要素を収集
+            const partMatches = [];
+            for (let el of elements) {
+                const text = el.innerText ? el.innerText.trim() : "";
+                const normText = normalize(text);
+                if (normText.includes(targetNorm) && text.length > 0) {
+                    partMatches.push({ el, length: text.length });
+                }
+            }
+
+            // 長さの昇順ソートをして、最も短い長さのアコーディオンから返す
+            partMatches.sort((a, b) => a.length - b.length);
+            if (partMatches.length > 0) {
+                const minLength = partMatches[0].length;
+                const filtered = partMatches.filter(m => m.length <= minLength + 5).map(m => m.el);
+                console.log(`[DigikarAutoInput] Partial match elements found (length close to ${minLength}): ${filtered.length}`, filtered);
+                return filtered;
+            }
+
+            return [];
         }
 
         async findSetElement(setName, timeout = 8000) {
             const normalize = (str) => (str || "").replace(/[\s　]/g, '').toLowerCase();
             const targetNorm = normalize(setName);
+            console.log(`[DigikarAutoInput] findSetElement: searching "${setName}" (normalized: "${targetNorm}") timeout: ${timeout}ms`);
 
             const start = Date.now();
+            let checkCount = 0;
             while (Date.now() - start < timeout) {
-                // セット一覧の要素を探索する (a.css-cgnoip などの要素群)
-                const items = Array.from(document.querySelectorAll('a.css-cgnoip, span.css-q5yng0, div.DKSetItem, button, [role="button"]'));
+                checkCount++;
+                // 動的なクラス名（css-xudyti等）にも対応できるよう、a, span, button等の基本要素を広く検索
+                const items = Array.from(document.querySelectorAll('a, span, button, [role="button"]'));
+                if (checkCount === 1 || checkCount % 5 === 0) {
+                    console.log(`[DigikarAutoInput] findSetElement loop check #${checkCount}. Found ${items.length} potential set item elements in DOM.`);
+                }
                 for (let el of items) {
                     const text = el.innerText.trim();
                     if (normalize(text).includes(targetNorm) && text.length > 0) {
+                        console.log(`[DigikarAutoInput] Match found! Text: "${text}", Element:`, el);
                         return el;
                     }
                 }
                 await sleep(250);
             }
+            console.log(`[DigikarAutoInput] findSetElement: timed out searching for "${setName}"`);
             return null;
         }
 
@@ -732,16 +940,25 @@
         // ==========================================
         checkCurrentPage() {
             const url = window.location.href;
+            if (this.lastProcessedUrl === url) {
+                console.log(`[DigikarAutoInput] URL unchanged, skipping checkCurrentPage: ${url}`);
+                return;
+            }
+            console.log(`[DigikarAutoInput] checkCurrentPage URL: ${url}, isActive: ${this.isActive}`);
             if (url.includes('/reception/')) {
                 // 受付一覧画面
                 if (this.isActive) {
-                    this.currentIndex = parseInt(sessionStorage.getItem(KEY_INDEX) || '0');
+                    this.lastProcessedUrl = url;
+                    this.currentIndex = parseInt(localStorage.getItem(KEY_INDEX) || '0');
+                    console.log(`[DigikarAutoInput] Reception page detected. Starting index: ${this.currentIndex}`);
                     // ループ継続
                     this.processNextPatientAtReception();
                 }
             } else if (url.includes('/karte/') || url.includes('/patients/')) {
                 // カルテ詳細画面
+                console.log(`[DigikarAutoInput] Karte page detected. isActive: ${this.isActive}`);
                 if (this.isActive) {
+                    this.lastProcessedUrl = url;
                     // カルテ自動入力処理の実行
                     this.processKartePage();
                 }
