@@ -178,9 +178,10 @@ function doGet(e) {
           const pub2Val = String(row[11] || "").trim();
           const pub3Val = String(row[12] || "").trim();
 
-          // N, O列 (インデックス 13, 14) の値を取得 (デジカル用カルテテキスト・コスト)
+          // N, O, P列 (インデックス 13, 14, 15) の値を取得 (デジカル用カルテテキスト・コスト・運動療法)
           const digikarKarteVal = String(row[13] || "").trim();
           let digikarCostVal = String(row[14] || "").trim();
+          const digikarExerciseVal = String(row[15] || "").trim();
 
           // スプレッドシートが空欄の場合、自動判定されたセット名を割り当て
           if (!digikarCostVal) {
@@ -196,7 +197,8 @@ function doGet(e) {
             cool: patientCool,
             doctor: assignedDoctor,
             digikarKarte: digikarKarteVal,
-            digikarCost: digikarCostVal
+            digikarCost: digikarCostVal,
+            exerciseTherapy: digikarExerciseVal
           });
         }
       }

@@ -16,6 +16,8 @@
 // @connect      script.google.com
 // @connect      googleusercontent.com
 // @run-at       document-idle
+// @updateURL    https://raw.githubusercontent.com/ohnishi-med/weborca-auto-reception/master/digikar_auto_input.user.js
+// @downloadURL  https://raw.githubusercontent.com/ohnishi-med/weborca-auto-reception/master/digikar_auto_input.user.js
 // ==/UserScript==
 
 (function () {
@@ -40,6 +42,7 @@
     const KEY_INDEX = 'digikar_auto_index';
     const KEY_RECEPTION_URL = 'digikar_auto_reception_url';
     const KEY_LOG = 'digikar_auto_log';
+    const KEY_ERRORS = 'digikar_auto_errors';
 
     // CSSのインジェクション (Glassmorphism + ミントグリーン)
     const style = document.createElement('style');
@@ -246,7 +249,7 @@
             div.id = 'digikar-auto-panel';
             div.innerHTML = `
                 <h4 style="user-select: none;">
-                    <span>🤖 一括セット入力</span>
+                    <span>🤖 透析セット自動入力</span>
                     <div style="display: flex; align-items: center; gap: 8px;">
                         <span style="font-size:10px; color:#64748b;" id="digikar-panel-indicator">待機中</span>
                         <span class="digikar-panel-btn" id="digikar-auto-minimize" title="最小化" style="font-weight:bold;">➖</span>
@@ -258,8 +261,16 @@
                         <button class="digikar-btn-primary" id="digikar-auto-start">一括処理を開始</button>
                         <button class="digikar-btn-secondary" id="digikar-auto-stop">一時停止</button>
                     </div>
-                    <div style="text-align: right;">
-                        <span class="digikar-settings-toggle" id="digikar-auto-settings-toggle">⚙️ フォルダ設定</span>
+                    <div style="text-align: right; display: flex; justify-content: space-between; align-items: center; margin-top: 8px;">
+                        <a href="https://docs.google.com/spreadsheets/d/1yUgZgDLV1aJJHnmFmEgTBgXLYM34tkhfVezY25zO8Ew/edit?gid=0#gid=0" target="_blank" style="font-size: 11px; color: #0d9488; text-decoration: underline; display: inline-flex; align-items: center; gap: 4px;">
+                            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+                                <polyline points="15 3 21 3 21 9"></polyline>
+                                <line x1="10" y1="14" x2="21" y2="3"></line>
+                            </svg>
+                            透析患者リスト
+                        </a>
+                        <span class="digikar-settings-toggle" id="digikar-auto-settings-toggle" style="margin-top: 0;">⚙️ フォルダ設定</span>
                     </div>
                     <div class="digikar-settings-area" id="digikar-auto-settings-area" style="display: none;">
                         <div class="digikar-input-group">
@@ -426,6 +437,7 @@
         async startLoop() {
             if (this.isActive) return;
 
+            localStorage.removeItem(KEY_ERRORS);
             this.log("GASから本日の透析患者データを取得中...");
             this.updateUIActive(true);
 
@@ -555,8 +567,17 @@
 
             if (this.currentIndex >= this.patients.length) {
                 this.log("🎉 すべての患者の処理が完了しました！");
+                const errors = JSON.parse(localStorage.getItem(KEY_ERRORS) || '[]');
                 this.stopLoop();
-                alert("一括セット入力が完了しました。");
+                if (errors.length > 0) {
+                    let errorMsg = "⚠️ 一括処理が完了しましたが、以下のエラーが発生しました:\n\n";
+                    errors.forEach(e => {
+                        errorMsg += `・患者ID: ${e.patientId} - ${e.message}\n`;
+                    });
+                    alert(errorMsg);
+                } else {
+                    alert("一括セット入力が完了しました。");
+                }
                 return;
             }
 
@@ -754,11 +775,30 @@
                     matchedSetElement.click();
                     this.log(`セット「${appliedSetName}」を適用しました。`);
                     await sleep(WAIT_MS);
+
+                    // 運動療法のセット適用 (あり の場合)
+                    if (patient.exerciseTherapy === "あり") {
+                        this.log(`運動療法「あり」のため、追加セット「auto_運動療法」の適用を試みます...`);
+                        let matchedExerciseElement = await this.findSetElement("auto_運動療法", 3000);
+                        if (matchedExerciseElement) {
+                            console.log(`[DigikarAutoInput] Clicking matched exercise set element:`, matchedExerciseElement);
+                            matchedExerciseElement.click();
+                            this.log(`追加セット「auto_運動療法」を適用しました。`);
+                            await sleep(WAIT_MS);
+                        } else {
+                            const errorMsg = `追加セット「auto_運動療法」が画面上に見つかりませんでした。`;
+                            this.log(`❌ ${errorMsg}`);
+                            this.addError(patient.patientId, errorMsg);
+                            await this.skipToNextPatient();
+                            return;
+                        }
+                    }
                 } else {
-                    this.log(`❌ セット候補「${candidates.join(', ')}」が画面上に見つかりませんでした。`);
-                    console.error(`[DigikarAutoInput] Failed to find any set from candidates:`, candidates);
-                    this.log("安全のため、ここで一時停止します。手動で入力して完了させてください。");
-                    this.stopLoop();
+                    const errorMsg = `セット候補「${candidates.join(', ')}」が画面上に見つかりませんでした。`;
+                    this.log(`❌ ${errorMsg}`);
+                    console.error(`[DigikarAutoInput] ${errorMsg}`);
+                    this.addError(patient.patientId, errorMsg);
+                    await this.skipToNextPatient();
                     return;
                 }
             }
@@ -938,6 +978,25 @@
         // ==========================================
         // ページ判定とルーター
         // ==========================================
+        addError(patientId, message) {
+            const errors = JSON.parse(localStorage.getItem(KEY_ERRORS) || '[]');
+            errors.push({ patientId, message, time: new Date().toLocaleTimeString() });
+            localStorage.setItem(KEY_ERRORS, JSON.stringify(errors));
+        }
+
+        async skipToNextPatient() {
+            this.currentIndex++;
+            localStorage.setItem(KEY_INDEX, this.currentIndex.toString());
+            this.log("エラーが発生したため、この患者をスキップして受付画面に戻ります...");
+            await sleep(WAIT_MS);
+            const receptionUrl = localStorage.getItem(KEY_RECEPTION_URL);
+            if (receptionUrl) {
+                window.location.href = receptionUrl;
+            } else {
+                window.history.back();
+            }
+        }
+
         checkCurrentPage() {
             const url = window.location.href;
             if (this.lastProcessedUrl === url) {
