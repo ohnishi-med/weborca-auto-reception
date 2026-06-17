@@ -43,6 +43,7 @@
     const KEY_RECEPTION_URL = 'digikar_auto_reception_url';
     const KEY_LOG = 'digikar_auto_log';
     const KEY_ERRORS = 'digikar_auto_errors';
+    const KEY_TARGET_DAY = 'digikar_auto_target_day';
 
     // CSSのインジェクション (Glassmorphism + ミントグリーン)
     const style = document.createElement('style');
@@ -249,7 +250,7 @@
             div.id = 'digikar-auto-panel';
             div.innerHTML = `
                 <h4 style="user-select: none;">
-                    <span>🤖 透析セット自動入力</span>
+                    <span>🤖 透析セット一括入力</span>
                     <div style="display: flex; align-items: center; gap: 8px;">
                         <span style="font-size:10px; color:#64748b;" id="digikar-panel-indicator">待機中</span>
                         <span class="digikar-panel-btn" id="digikar-auto-minimize" title="最小化" style="font-weight:bold;">➖</span>
@@ -260,6 +261,14 @@
                     <div id="digikar-control-area">
                         <button class="digikar-btn-primary" id="digikar-auto-start">一括処理を開始</button>
                         <button class="digikar-btn-secondary" id="digikar-auto-stop">一時停止</button>
+                    </div>
+                    <div style="margin-top: 8px; padding: 6px; background: rgba(13, 148, 136, 0.05); border-radius: 6px; display: flex; flex-direction: column; gap: 6px;">
+                        <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 11.5px; font-weight: bold; color: #0f766e; margin: 0; user-select: none;">
+                            <input type="checkbox" id="digikar-chk-karte-cost" checked> 算定・カルテ
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 11.5px; font-weight: bold; color: #0f766e; margin: 0; user-select: none;">
+                            <input type="checkbox" id="digikar-chk-regular-prescription" checked> 定期処方
+                        </label>
                     </div>
                     <div style="text-align: right; display: flex; justify-content: space-between; align-items: center; margin-top: 8px;">
                         <a href="https://docs.google.com/spreadsheets/d/1yUgZgDLV1aJJHnmFmEgTBgXLYM34tkhfVezY25zO8Ew/edit?gid=0#gid=0" target="_blank" style="font-size: 11px; color: #0d9488; text-decoration: underline; display: inline-flex; align-items: center; gap: 4px;">
@@ -288,6 +297,21 @@
             this.statusEl = div.querySelector('#digikar-auto-status');
             this.startBtn = div.querySelector('#digikar-auto-start');
             this.stopBtn = div.querySelector('#digikar-auto-stop');
+
+            const chkKarteCost = div.querySelector('#digikar-chk-karte-cost');
+            const chkRegular = div.querySelector('#digikar-chk-regular-prescription');
+
+            // 保存された状態をロード
+            chkKarteCost.checked = localStorage.getItem('digikar_auto_chk_karte') !== 'false';
+            chkRegular.checked = localStorage.getItem('digikar_auto_chk_regular') !== 'false';
+
+            // 変更イベントの保存
+            chkKarteCost.addEventListener('change', () => {
+                localStorage.setItem('digikar_auto_chk_karte', chkKarteCost.checked);
+            });
+            chkRegular.addEventListener('change', () => {
+                localStorage.setItem('digikar_auto_chk_regular', chkRegular.checked);
+            });
 
             const settingsToggle = div.querySelector('#digikar-auto-settings-toggle');
             const settingsArea = div.querySelector('#digikar-auto-settings-area');
@@ -532,6 +556,7 @@
                             localStorage.setItem(KEY_PATIENTS, JSON.stringify(targetPatients));
                             localStorage.setItem(KEY_INDEX, '0');
                             localStorage.setItem(KEY_RECEPTION_URL, window.location.href);
+                            localStorage.setItem(KEY_TARGET_DAY, targetDay);
 
                             this.log(`対象患者: ${this.patients.length}件の処理を開始します。`);
                             this.processNextPatientAtReception();
@@ -558,6 +583,7 @@
             localStorage.removeItem(KEY_PATIENTS);
             localStorage.removeItem(KEY_INDEX);
             localStorage.removeItem(KEY_RECEPTION_URL);
+            localStorage.removeItem(KEY_TARGET_DAY);
             this.updateUIActive(false);
             this.log("自動処理を停止しました。");
         }
@@ -681,8 +707,11 @@
                 console.warn("[DigikarAutoInput] Could not retrieve patient ID from the page header.");
             }
 
-            // 1. カルテエディタ（Tiptap/ProseMirror）への入力 (カルテ記述指定があれば)
-            if (patient.digikarKarte) {
+            const runKarteCost = localStorage.getItem('digikar_auto_chk_karte') !== 'false';
+            const runRegular = localStorage.getItem('digikar_auto_chk_regular') !== 'false';
+
+            // 1. カルテエディタ（Tiptap/ProseMirror）への入力 (カルテ記述指定があり、かつ「算定・カルテ」チェックがONの場合)
+            if (runKarteCost && patient.digikarKarte) {
                 this.log("カルテの経過記録を入力中...");
                 const editor = await waitForElement('.tiptap, .ProseMirror');
                 if (editor) {
@@ -694,112 +723,176 @@
                 }
             }
 
-            // 2. セットの自動入力
-            const candidates = patient.digikarCostCandidates || (patient.digikarCost ? [patient.digikarCost] : []);
-            console.log(`[DigikarAutoInput] Set candidates count: ${candidates.length}, list:`, candidates);
-            if (candidates.length > 0) {
-                this.log(`右パネルの「セット」タブをクリックします...`);
-                // 右パネルのセットタブを探してクリック
-                const tabs = Array.from(document.querySelectorAll('li, div, button'));
-                console.log(`[DigikarAutoInput] Looking for set tab in ${tabs.length} elements...`);
-                const setTab = tabs.find(el => el.innerText && el.innerText.trim() === 'セット');
-                if (setTab) {
-                    console.log(`[DigikarAutoInput] Found set tab element. Clicking:`, setTab);
-                    setTab.click();
-                    await sleep(1000);
-                } else {
-                    this.log("⚠️ 「セット」タブが見つかりませんでした。そのまま要素を検索します。");
-                    console.warn(`[DigikarAutoInput] "セット" tab not found in the tabs list.`);
-                }
-
-                this.log(`対象セット候補「${candidates.join(', ')}」を画面上で探索中...`);
-                let matchedSetElement = null;
-                let appliedSetName = "";
-
-                // 候補順にセットを探索（フォルダ展開前に見つかるか試す）
-                for (const setName of candidates) {
-                    console.log(`[DigikarAutoInput] Searching for "${setName}" before expanding folder...`);
-                    matchedSetElement = await this.findSetElement(setName, 1500);
-                    if (matchedSetElement) {
-                        appliedSetName = setName;
-                        console.log(`[DigikarAutoInput] Set "${setName}" found before expansion!`);
-                        break;
+            // 2. セットの自動入力 (「算定・カルテ」チェックがONの場合)
+            if (runKarteCost) {
+                const candidates = patient.digikarCostCandidates || (patient.digikarCost ? [patient.digikarCost] : []);
+                console.log(`[DigikarAutoInput] Set candidates count: ${candidates.length}, list:`, candidates);
+                if (candidates.length > 0) {
+                    this.log(`右パネルの「セット」タブをクリックします...`);
+                    // 右パネルのセットタブを探してクリック
+                    const tabs = Array.from(document.querySelectorAll('li, div, button'));
+                    console.log(`[DigikarAutoInput] Looking for set tab in ${tabs.length} elements...`);
+                    const setTab = tabs.find(el => el.innerText && el.innerText.trim() === 'セット');
+                    if (setTab) {
+                        console.log(`[DigikarAutoInput] Found set tab element. Clicking:`, setTab);
+                        setTab.click();
+                        await sleep(1000);
+                    } else {
+                        this.log("⚠️ 「セット」タブが見つかりませんでした。そのまま要素を検索します。");
+                        console.warn(`[DigikarAutoInput] "セット" tab not found in the tabs list.`);
                     }
-                }
 
-                if (!matchedSetElement) {
-                    // 見つからない場合、アコーディオンが閉じている可能性があるので、フォルダを展開
-                    const folderName = GM_getValue('digikar_folder_name', '透析回診');
-                    this.log(`セットが見つかりません。フォルダ「${folderName}」の多階層展開を試みます...`);
-                    console.log(`[DigikarAutoInput] Set not found in current view. Starting multi-depth folder expansion for: "${folderName}"`);
-                    
-                    // 最大3階層までアコーディオン展開を繰り返す
-                    for (let depth = 0; depth < 3; depth++) {
-                        console.log(`[DigikarAutoInput] Folder expansion depth ${depth + 1}...`);
-                        const accordions = await this.findAllAccordionHeaders(folderName);
-                        
-                        if (accordions.length > 0) {
-                            console.log(`[DigikarAutoInput] Found ${accordions.length} matching folders at depth ${depth + 1}. Clicking...`);
-                            for (let i = 0; i < accordions.length; i++) {
-                                console.log(`[DigikarAutoInput] Clicking folder element:`, accordions[i]);
-                                accordions[i].click();
-                                await sleep(1000); // 展開アニメーションを待つ
-                            }
-                            
-                            // 展開した段階でセットが見つかるか中間チェック
-                            console.log(`[DigikarAutoInput] Middle check for set items at depth ${depth + 1}...`);
-                            for (const setName of candidates) {
-                                matchedSetElement = await this.findSetElement(setName, 1500);
-                                if (matchedSetElement) {
-                                    appliedSetName = setName;
-                                    break;
-                                }
-                            }
-                            if (matchedSetElement) {
-                                console.log(`[DigikarAutoInput] Set successfully found at depth ${depth + 1}!`);
-                                break;
-                            }
-                        } else {
-                            console.log(`[DigikarAutoInput] No matching folders found at depth ${depth + 1}. Ending depth loop.`);
+                    this.log(`対象セット候補「${candidates.join(', ')}」を画面上で探索中...`);
+                    let matchedSetElement = null;
+                    let appliedSetName = "";
+
+                    // 候補順にセットを探索（フォルダ展開前に見つかるか試す）
+                    for (const setName of candidates) {
+                        console.log(`[DigikarAutoInput] Searching for "${setName}" before expanding folder...`);
+                        matchedSetElement = await this.findSetElement(setName, 1500);
+                        if (matchedSetElement) {
+                            appliedSetName = setName;
+                            console.log(`[DigikarAutoInput] Set "${setName}" found before expansion!`);
                             break;
                         }
                     }
-                    
+
                     if (!matchedSetElement) {
-                        this.log(`⚠️ フォルダ「${folderName}」をすべて展開しましたが、セットが見つかりませんでした。`);
+                        // 見つからない場合、アコーディオンが閉じている可能性があるので、フォルダを展開
+                        const folderName = GM_getValue('digikar_folder_name', '透析回診');
+                        this.log(`セットが見つかりません。フォルダ「${folderName}」の多階層展開を試みます...`);
+                        console.log(`[DigikarAutoInput] Set not found in current view. Starting multi-depth folder expansion for: "${folderName}"`);
+                        
+                        // 最大3階層までアコーディオン展開を繰り返す
+                        for (let depth = 0; depth < 3; depth++) {
+                            console.log(`[DigikarAutoInput] Folder expansion depth ${depth + 1}...`);
+                            const accordions = await this.findAllAccordionHeaders(folderName);
+                            
+                            if (accordions.length > 0) {
+                                console.log(`[DigikarAutoInput] Found ${accordions.length} matching folders at depth ${depth + 1}. Clicking...`);
+                                for (let i = 0; i < accordions.length; i++) {
+                                    console.log(`[DigikarAutoInput] Clicking folder element:`, accordions[i]);
+                                    accordions[i].click();
+                                    await sleep(1000); // 展開アニメーションを待つ
+                                }
+                                
+                                // 展開した段階でセットが見つかるか中間チェック
+                                console.log(`[DigikarAutoInput] Middle check for set items at depth ${depth + 1}...`);
+                                for (const setName of candidates) {
+                                    matchedSetElement = await this.findSetElement(setName, 1500);
+                                    if (matchedSetElement) {
+                                        appliedSetName = setName;
+                                        break;
+                                    }
+                                }
+                                if (matchedSetElement) {
+                                    console.log(`[DigikarAutoInput] Set successfully found at depth ${depth + 1}!`);
+                                    break;
+                                }
+                            } else {
+                                console.log(`[DigikarAutoInput] No matching folders found at depth ${depth + 1}. Ending depth loop.`);
+                                break;
+                            }
+                        }
+                        
+                        if (!matchedSetElement) {
+                            this.log(`⚠️ フォルダ「${folderName}」をすべて展開しましたが、セットが見つかりませんでした。`);
+                        }
+                    }
+
+                    if (matchedSetElement) {
+                        console.log(`[DigikarAutoInput] Clicking matched set element:`, matchedSetElement);
+                        matchedSetElement.click();
+                        this.log(`セット「${appliedSetName}」を適用しました。`);
+                        await sleep(WAIT_MS);
+
+                        // 運動療法のセット適用 (あり の場合)
+                        if (patient.exerciseTherapy === "あり") {
+                            this.log(`運動療法「あり」のため、追加セット「auto_運動療法」の適用を試みます...`);
+                            let matchedExerciseElement = await this.findSetElement("auto_運動療法", 3000);
+                            if (matchedExerciseElement) {
+                                console.log(`[DigikarAutoInput] Clicking matched exercise set element:`, matchedExerciseElement);
+                                matchedExerciseElement.click();
+                                this.log(`追加セット「auto_運動療法」を適用しました。`);
+                                await sleep(WAIT_MS);
+                            } else {
+                                const errorMsg = `追加セット「auto_運動療法」が画面上に見つかりませんでした。`;
+                                this.log(`❌ ${errorMsg}`);
+                                this.addError(patient.patientId, errorMsg);
+                                await this.skipToNextPatient();
+                                return;
+                            }
+                        }
+                    } else {
+                        const errorMsg = `セット候補「${candidates.join(', ')}」が画面上に見つかりませんでした。`;
+                        this.log(`❌ ${errorMsg}`);
+                        console.error(`[DigikarAutoInput] ${errorMsg}`);
+                        this.addError(patient.patientId, errorMsg);
+                        await this.skipToNextPatient();
+                        return;
+                    }
+                }
+            }
+
+            // 定期処方セットの自動入力 (「定期処方」チェックがONの場合)
+            const savedTargetDay = localStorage.getItem(KEY_TARGET_DAY) || "";
+            let subFolderName = "";
+            const isMonWedFri = ["月", "水", "金"].includes(savedTargetDay);
+            const isTueThuSat = ["火", "木", "土"].includes(savedTargetDay);
+            if (isMonWedFri) {
+                subFolderName = "定期処方（月水金）";
+            } else if (isTueThuSat) {
+                subFolderName = "定期処方（火木土）";
+            }
+
+            if (runRegular && subFolderName) {
+                this.log(`定期処方セットの自動入力を開始します...`);
+                let patientName = "";
+                if (patient.patientName) {
+                    patientName = patient.patientName.replace(/[\s　]/g, '').trim();
+                } else if (patient.name) {
+                    patientName = patient.name.replace(/[\s　]/g, '').trim();
+                } else {
+                    const nameFromKarte = await this.getCurrentPatientNameFromKarte();
+                    if (nameFromKarte) {
+                        patientName = nameFromKarte;
                     }
                 }
 
-                if (matchedSetElement) {
-                    console.log(`[DigikarAutoInput] Clicking matched set element:`, matchedSetElement);
-                    matchedSetElement.click();
-                    this.log(`セット「${appliedSetName}」を適用しました。`);
-                    await sleep(WAIT_MS);
+                if (patientName) {
+                    const regularSetName = `auto定期_${patientName}`;
+                    this.log(`定期処方セット「${regularSetName}」を探します...`);
 
-                    // 運動療法のセット適用 (あり の場合)
-                    if (patient.exerciseTherapy === "あり") {
-                        this.log(`運動療法「あり」のため、追加セット「auto_運動療法」の適用を試みます...`);
-                        let matchedExerciseElement = await this.findSetElement("auto_運動療法", 3000);
-                        if (matchedExerciseElement) {
-                            console.log(`[DigikarAutoInput] Clicking matched exercise set element:`, matchedExerciseElement);
-                            matchedExerciseElement.click();
-                            this.log(`追加セット「auto_運動療法」を適用しました。`);
-                            await sleep(WAIT_MS);
-                        } else {
-                            const errorMsg = `追加セット「auto_運動療法」が画面上に見つかりませんでした。`;
-                            this.log(`❌ ${errorMsg}`);
-                            this.addError(patient.patientId, errorMsg);
-                            await this.skipToNextPatient();
-                            return;
+                    let matchedRegularSet = await this.findSetElement(regularSetName, 1500);
+
+                    if (!matchedRegularSet) {
+                        const parentFolderName = GM_getValue('digikar_folder_name', '透析回診');
+                        this.log(`フォルダ「${parentFolderName}」 > 「${subFolderName}」の展開を試みます...`);
+                        
+                        const parentAccordions = await this.findAllAccordionHeaders(parentFolderName);
+                        for (let acc of parentAccordions) {
+                            acc.click();
+                            await sleep(800);
                         }
+
+                        const subAccordions = await this.findAllAccordionHeaders(subFolderName);
+                        for (let acc of subAccordions) {
+                            acc.click();
+                            await sleep(800);
+                        }
+
+                        matchedRegularSet = await this.findSetElement(regularSetName, 2000);
+                    }
+
+                    if (matchedRegularSet) {
+                        matchedRegularSet.click();
+                        this.log(`定期処方セット「${regularSetName}」を適用しました。`);
+                        await sleep(WAIT_MS);
+                    } else {
+                        this.log(`⚠️ 定期処方セット「${regularSetName}」が画面上に見つかりませんでした。スキップします。`);
                     }
                 } else {
-                    const errorMsg = `セット候補「${candidates.join(', ')}」が画面上に見つかりませんでした。`;
-                    this.log(`❌ ${errorMsg}`);
-                    console.error(`[DigikarAutoInput] ${errorMsg}`);
-                    this.addError(patient.patientId, errorMsg);
-                    await this.skipToNextPatient();
-                    return;
+                    this.log(`⚠️ 患者氏名が取得できなかったため、定期処方の入力をスキップします。`);
                 }
             }
 
@@ -872,6 +965,18 @@
                 const spans = header.querySelectorAll(':scope > span');
                 if (spans.length > 0) {
                     return spans[0].innerText.trim();
+                }
+            }
+            return null;
+        }
+
+        async getCurrentPatientNameFromKarte() {
+            // .css-ustlin 内の2番目のspan等に氏名が入っている構成が多い
+            const header = await waitForElement('.css-ustlin');
+            if (header) {
+                const spans = header.querySelectorAll(':scope > span');
+                if (spans.length > 1) {
+                    return spans[1].innerText.replace(/[\s　]/g, '').trim();
                 }
             }
             return null;
