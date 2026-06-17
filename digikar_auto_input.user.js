@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         M3デジカル 受付画面起点・自動セット入力ツール
 // @namespace    http://tampermonkey.net/
-// @version      2.2
+// @version      2.3
 // @description  デジカル受付画面から透析患者カルテへ順次遷移し、セット適用・一時保存・帰還を自動ループ処理します
 // @author       Antigravity
 // @match        https://*.digikar.jp/reception/*
@@ -710,25 +710,28 @@
                 }
             }
 
-            // 2. セットの自動入力 (「算定・カルテ」チェックがONの場合)
+            // 2. 「セット」タブのクリック (「算定・カルテ」または「定期処方」がONの場合に実行)
+            if (runKarteCost || runRegular) {
+                this.log(`右パネルの「セット」タブをクリックします...`);
+                // 右パネルのセットタブを探してクリック
+                const tabs = Array.from(document.querySelectorAll('li, div, button'));
+                console.log(`[DigikarAutoInput] Looking for set tab in ${tabs.length} elements...`);
+                const setTab = tabs.find(el => el.innerText && el.innerText.trim() === 'セット');
+                if (setTab) {
+                    console.log(`[DigikarAutoInput] Found set tab element. Clicking:`, setTab);
+                    setTab.click();
+                    await sleep(1000);
+                } else {
+                    this.log("⚠️ 「セット」タブが見つかりませんでした。そのまま要素を検索します。");
+                    console.warn(`[DigikarAutoInput] "セット" tab not found in the tabs list.`);
+                }
+            }
+
+            // 2.1 算定・カルテの自動入力 (「算定・カルテ」チェックがONの場合)
             if (runKarteCost) {
                 const candidates = patient.digikarCostCandidates || (patient.digikarCost ? [patient.digikarCost] : []);
                 console.log(`[DigikarAutoInput] Set candidates count: ${candidates.length}, list:`, candidates);
                 if (candidates.length > 0) {
-                    this.log(`右パネルの「セット」タブをクリックします...`);
-                    // 右パネルのセットタブを探してクリック
-                    const tabs = Array.from(document.querySelectorAll('li, div, button'));
-                    console.log(`[DigikarAutoInput] Looking for set tab in ${tabs.length} elements...`);
-                    const setTab = tabs.find(el => el.innerText && el.innerText.trim() === 'セット');
-                    if (setTab) {
-                        console.log(`[DigikarAutoInput] Found set tab element. Clicking:`, setTab);
-                        setTab.click();
-                        await sleep(1000);
-                    } else {
-                        this.log("⚠️ 「セット」タブが見つかりませんでした。そのまま要素を検索します。");
-                        console.warn(`[DigikarAutoInput] "セット" tab not found in the tabs list.`);
-                    }
-
                     this.log(`対象セット候補「${candidates.join(', ')}」を画面上で探索中...`);
                     let matchedSetElement = null;
                     let appliedSetName = "";
@@ -821,7 +824,7 @@
                 }
             }
 
-            // 定期処方セットの自動入力 (「定期処方」チェックがONの場合)
+            // 2.2 定期処方セットの自動入力 (「定期処方」チェックがONの場合)
             const savedTargetDay = localStorage.getItem(KEY_TARGET_DAY) || "";
             let subFolderName = "";
             const isMonWedFri = ["月", "水", "金"].includes(savedTargetDay);
@@ -856,16 +859,27 @@
                         const parentFolderName = GM_getValue('digikar_folder_name', '透析回診');
                         this.log(`フォルダ「${parentFolderName}」 > 「${subFolderName}」の展開を試みます...`);
                         
-                        const parentAccordions = await this.findAllAccordionHeaders(parentFolderName);
-                        for (let acc of parentAccordions) {
-                            acc.click();
-                            await sleep(800);
+                        // 親フォルダがすでに開いているかチェック（サブアコーディオンが可視か）
+                        const subAccordionsVisible = await this.findAllAccordionHeaders(subFolderName);
+                        const isSubVisible = subAccordionsVisible.some(acc => acc.offsetParent !== null);
+                        
+                        if (!isSubVisible) {
+                            const parentAccordions = await this.findAllAccordionHeaders(parentFolderName);
+                            for (let acc of parentAccordions) {
+                                acc.click();
+                                await sleep(800);
+                            }
                         }
 
+                        // 子フォルダ「定期処方（曜日）」の展開
                         const subAccordions = await this.findAllAccordionHeaders(subFolderName);
                         for (let acc of subAccordions) {
-                            acc.click();
-                            await sleep(800);
+                            // 既にセットが見えていればクリックしない
+                            const setElement = await this.findSetElement(regularSetName, 500);
+                            if (!setElement) {
+                                acc.click();
+                                await sleep(800);
+                            }
                         }
 
                         matchedRegularSet = await this.findSetElement(regularSetName, 2000);
