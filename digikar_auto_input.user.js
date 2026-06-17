@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         M3デジカル 受付画面起点・自動セット入力ツール
 // @namespace    http://tampermonkey.net/
-// @version      2.1
+// @version      2.2
 // @description  デジカル受付画面から透析患者カルテへ順次遷移し、セット適用・一時保存・帰還を自動ループ処理します
 // @author       Antigravity
 // @match        https://*.digikar.jp/reception/*
@@ -44,6 +44,7 @@
     const KEY_LOG = 'digikar_auto_log';
     const KEY_ERRORS = 'digikar_auto_errors';
     const KEY_TARGET_DAY = 'digikar_auto_target_day';
+    const KEY_RUN_MODE = 'digikar_auto_run_mode';
 
     // CSSのインジェクション (Glassmorphism + ミントグリーン)
     const style = document.createElement('style');
@@ -258,17 +259,10 @@
                     </div>
                 </h4>
                 <div id="digikar-auto-content">
-                    <div id="digikar-control-area">
-                        <button class="digikar-btn-primary" id="digikar-auto-start">一括処理を開始</button>
-                        <button class="digikar-btn-secondary" id="digikar-auto-stop">一時停止</button>
-                    </div>
-                    <div style="margin-top: 8px; padding: 6px; background: rgba(13, 148, 136, 0.05); border-radius: 6px; display: flex; flex-direction: column; gap: 6px;">
-                        <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 11.5px; font-weight: bold; color: #0f766e; margin: 0; user-select: none;">
-                            <input type="checkbox" id="digikar-chk-karte-cost" checked> 算定・カルテ
-                        </label>
-                        <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 11.5px; font-weight: bold; color: #0f766e; margin: 0; user-select: none;">
-                            <input type="checkbox" id="digikar-chk-regular-prescription" checked> 定期処方
-                        </label>
+                    <div id="digikar-control-area" style="display: flex; flex-direction: column; gap: 6px;">
+                        <button class="digikar-btn-primary" id="digikar-auto-start-karte" style="margin-top: 4px;">算定・カルテ 一括入力</button>
+                        <button class="digikar-btn-primary" id="digikar-auto-start-regular" style="margin-top: 4px; background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%); box-shadow: 0 3px 6px rgba(3, 105, 161, 0.2);">定期処方 一括入力</button>
+                        <button class="digikar-btn-secondary" id="digikar-auto-stop" style="margin-top: 4px; display: none;">一時停止</button>
                     </div>
                     <div style="text-align: right; display: flex; justify-content: space-between; align-items: center; margin-top: 8px;">
                         <a href="https://docs.google.com/spreadsheets/d/1yUgZgDLV1aJJHnmFmEgTBgXLYM34tkhfVezY25zO8Ew/edit?gid=0#gid=0" target="_blank" style="font-size: 11px; color: #0d9488; text-decoration: underline; display: inline-flex; align-items: center; gap: 4px;">
@@ -295,23 +289,9 @@
 
             this.panel = div;
             this.statusEl = div.querySelector('#digikar-auto-status');
-            this.startBtn = div.querySelector('#digikar-auto-start');
+            this.startBtnKarte = div.querySelector('#digikar-auto-start-karte');
+            this.startBtnRegular = div.querySelector('#digikar-auto-start-regular');
             this.stopBtn = div.querySelector('#digikar-auto-stop');
-
-            const chkKarteCost = div.querySelector('#digikar-chk-karte-cost');
-            const chkRegular = div.querySelector('#digikar-chk-regular-prescription');
-
-            // 保存された状態をロード
-            chkKarteCost.checked = localStorage.getItem('digikar_auto_chk_karte') !== 'false';
-            chkRegular.checked = localStorage.getItem('digikar_auto_chk_regular') !== 'false';
-
-            // 変更イベントの保存
-            chkKarteCost.addEventListener('change', () => {
-                localStorage.setItem('digikar_auto_chk_karte', chkKarteCost.checked);
-            });
-            chkRegular.addEventListener('change', () => {
-                localStorage.setItem('digikar_auto_chk_regular', chkRegular.checked);
-            });
 
             const settingsToggle = div.querySelector('#digikar-auto-settings-toggle');
             const settingsArea = div.querySelector('#digikar-auto-settings-area');
@@ -373,7 +353,8 @@
                 }
             });
 
-            this.startBtn.addEventListener('click', () => this.startLoop());
+            this.startBtnKarte.addEventListener('click', () => this.startLoop('karte'));
+            this.startBtnRegular.addEventListener('click', () => this.startLoop('regular'));
             this.stopBtn.addEventListener('click', () => this.stopLoop());
 
             // ドラッグ＆ドロップ機能の実装
@@ -443,12 +424,14 @@
 
         updateUIActive(active) {
             if (active) {
-                this.startBtn.style.display = "none";
+                this.startBtnKarte.style.display = "none";
+                this.startBtnRegular.style.display = "none";
                 this.stopBtn.style.display = "block";
                 document.getElementById('digikar-panel-indicator').innerText = "実行中";
                 document.getElementById('digikar-panel-indicator').style.color = "#0d9488";
             } else {
-                this.startBtn.style.display = "block";
+                this.startBtnKarte.style.display = "block";
+                this.startBtnRegular.style.display = "block";
                 this.stopBtn.style.display = "none";
                 document.getElementById('digikar-panel-indicator').innerText = "待機中";
                 document.getElementById('digikar-panel-indicator').style.color = "#64748b";
@@ -458,11 +441,12 @@
         // ==========================================
         // 受付画面での処理
         // ==========================================
-        async startLoop() {
+        async startLoop(mode) {
             if (this.isActive) return;
 
             localStorage.removeItem(KEY_ERRORS);
-            this.log("GASから本日の透析患者データを取得中...");
+            const modeText = mode === 'karte' ? '算定・カルテ' : '定期処方';
+            this.log(`GASから本日の透析患者データを取得中 (${modeText})...`);
             this.updateUIActive(true);
 
             // 受付URLの日付から曜日を取得する
@@ -557,6 +541,7 @@
                             localStorage.setItem(KEY_INDEX, '0');
                             localStorage.setItem(KEY_RECEPTION_URL, window.location.href);
                             localStorage.setItem(KEY_TARGET_DAY, targetDay);
+                            localStorage.setItem(KEY_RUN_MODE, mode);
 
                             this.log(`対象患者: ${this.patients.length}件の処理を開始します。`);
                             this.processNextPatientAtReception();
@@ -584,6 +569,7 @@
             localStorage.removeItem(KEY_INDEX);
             localStorage.removeItem(KEY_RECEPTION_URL);
             localStorage.removeItem(KEY_TARGET_DAY);
+            localStorage.removeItem(KEY_RUN_MODE);
             this.updateUIActive(false);
             this.log("自動処理を停止しました。");
         }
@@ -707,8 +693,9 @@
                 console.warn("[DigikarAutoInput] Could not retrieve patient ID from the page header.");
             }
 
-            const runKarteCost = localStorage.getItem('digikar_auto_chk_karte') !== 'false';
-            const runRegular = localStorage.getItem('digikar_auto_chk_regular') !== 'false';
+            const runMode = localStorage.getItem(KEY_RUN_MODE) || 'karte';
+            const runKarteCost = runMode === 'karte';
+            const runRegular = runMode === 'regular';
 
             // 1. カルテエディタ（Tiptap/ProseMirror）への入力 (カルテ記述指定があり、かつ「算定・カルテ」チェックがONの場合)
             if (runKarteCost && patient.digikarKarte) {
