@@ -29,17 +29,20 @@ function doGet(e) {
     const patientData = patientSheet.getDataRange().getValues();
     const headerRow = patientData[0];
     
-    // デフォルト値 (A列: ID, B列: 保険, C列: 曜日, D列: クール)
+    // デフォルト値 (A列: ID, B列: 氏名, C列: 保険, D列: 曜日, E列: クール)
     let colId = 0;
-    let colInsurance = 1;
-    let colDay = 2;
-    let colCool = 3;
+    let colName = 1;
+    let colInsurance = 2;
+    let colDay = 3;
+    let colCool = 4;
     
     // ヘッダー文字列から列インデックスを自動的に検出 (順不同や「氏名」列が挟まれている場合に対応)
     for (let col = 0; col < headerRow.length; col++) {
       const headerName = String(headerRow[col] || "").trim();
       if (headerName.indexOf("ID") !== -1 || headerName.indexOf("番号") !== -1 || headerName.indexOf("コード") !== -1) {
         colId = col;
+      } else if (headerName.indexOf("氏名") !== -1 || headerName.indexOf("名前") !== -1 || headerName.indexOf("患者名") !== -1) {
+        colName = col;
       } else if (headerName.indexOf("保険") !== -1 || headerName.indexOf("区分") !== -1 || headerName.indexOf("種別") !== -1) {
         colInsurance = col;
       } else if (headerName.indexOf("曜日") !== -1) {
@@ -154,6 +157,7 @@ function doGet(e) {
     for (let i = 1; i < patientData.length; i++) {
       const row = patientData[i];
       const patientId = String(row[colId] || "").trim();
+      const patientName = String(row[colName] || "").trim(); // 氏名（B列）を取得
       const insuranceType = String(row[colInsurance] || "").trim();
       const day = String(row[colDay] || "").trim();
       const cool = String(row[colCool] || "").trim();
@@ -190,6 +194,7 @@ function doGet(e) {
 
           patients.push({
             patientId: patientId,
+            patientName: patientName, // 氏名プロパティを返却用データに追加
             insuranceType: insVal,
             publicFund1: pub1Val,
             publicFund2: pub2Val,
