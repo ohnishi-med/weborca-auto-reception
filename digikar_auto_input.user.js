@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         M3デジカル 受付画面起点・自動セット入力ツール
 // @namespace    http://tampermonkey.net/
-// @version      3.0
+// @version      3.1
 // @description  デジカル受付画面から透析患者カルテへ順次遷移し、セット適用・一時保存・帰還を自動ループ処理します
 // @author       Antigravity
 // @match        https://*.digikar.jp/reception/*
@@ -771,7 +771,13 @@
                         await this.expandMultiDepthFolders(folderPath);
                         
                         // 展開後に最終確認
-                        matchedSetElement = await this.findSetElement(setName, 2000);
+                        for (const name of candidates) {
+                            matchedSetElement = await this.findSetElement(name, 2000);
+                            if (matchedSetElement) {
+                                appliedSetName = name;
+                                break;
+                            }
+                        }
                     }
 
                     if (matchedSetElement) {
