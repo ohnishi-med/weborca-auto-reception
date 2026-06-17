@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         M3デジカル 受付画面起点・自動セット入力ツール
 // @namespace    http://tampermonkey.net/
-// @version      3.6
+// @version      3.7
 // @description  デジカル受付画面から透析患者カルテへ順次遷移し、セット適用・一時保存・帰還を自動ループ処理します
 // @author       Antigravity
 // @match        https://*.digikar.jp/reception/*
@@ -1012,6 +1012,9 @@
 
             // 1. 完全一致する最も内側の要素を最優先で収集
             for (let el of elements) {
+                // 自作パネル内の要素は除外
+                if (el.closest('#digikar-auto-panel')) continue;
+
                 const text = el.innerText ? el.innerText.trim() : "";
                 if (normalize(text) === targetNorm) {
                     // 子要素に同じテキストを持つ子ノードがないか確認し、最も内側の要素だけを収集
@@ -1038,6 +1041,9 @@
             console.log(`[DigikarAutoInput] No perfect matches for "${folderName}". Trying partial matches...`);
             const partMatches = [];
             for (let el of elements) {
+                // 自作パネル内の要素は除外
+                if (el.closest('#digikar-auto-panel')) continue;
+
                 const text = el.innerText ? el.innerText.trim() : "";
                 const normText = normalize(text);
                 if (normText.includes(targetNorm) && text.length > 0) {
@@ -1079,6 +1085,9 @@
                     console.log(`[DigikarAutoInput] findSetElement loop check #${checkCount}. Found ${items.length} potential set item elements in DOM.`);
                 }
                 for (let el of items) {
+                    // 自作パネル内の要素は探索から除外する
+                    if (el.closest('#digikar-auto-panel')) continue;
+
                     const text = el.innerText.trim();
                     if (normalize(text).includes(targetNorm) && text.length > 0) {
                         // 画面上に実際に表示されている（クリック可能な）要素のみを対象とする
