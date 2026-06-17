@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         M3デジカル 受付画面起点・自動セット入力ツール
 // @namespace    http://tampermonkey.net/
-// @version      3.3
+// @version      3.4
 // @description  デジカル受付画面から透析患者カルテへ順次遷移し、セット適用・一時保存・帰還を自動ループ処理します
 // @author       Antigravity
 // @match        https://*.digikar.jp/reception/*
@@ -958,6 +958,7 @@
             const folderNames = fullPathStr.split('>').map(s => s.trim()).filter(Boolean);
             
             this.log(`アコーディオン展開を開始: ${folderNames.join(' > ')}`);
+            console.log(`[DigikarAutoInput] expandMultiDepthFolders initiated with path: "${fullPathStr}"`, folderNames);
             
             for (let i = 0; i < folderNames.length; i++) {
                 const targetFolder = folderNames[i];
@@ -966,12 +967,24 @@
                 // 次の階層のフォルダが存在する場合、それが画面上に見えているかチェックする
                 if (i < folderNames.length - 1) {
                     const nextFolder = folderNames[i + 1];
+                    console.log(`[DigikarAutoInput] Checking if next level folder "${nextFolder}" is visible to determine if parent "${targetFolder}" is already open...`);
                     const nextAccordions = await this.findAllAccordionHeaders(nextFolder);
-                    isAlreadyOpen = nextAccordions.some(acc => acc.offsetParent !== null);
+                    
+                    if (nextAccordions.length > 0) {
+                        isAlreadyOpen = nextAccordions.some(acc => {
+                            const isVisible = acc.offsetParent !== null;
+                            console.log(`[DigikarAutoInput] Checked next level accordion item:`, acc, `| offsetParent:`, acc.offsetParent, `| isVisible:`, isVisible);
+                            return isVisible;
+                        });
+                    } else {
+                        console.log(`[DigikarAutoInput] Next level folder "${nextFolder}" was not found in DOM at all.`);
+                    }
+                    console.log(`[DigikarAutoInput] Decision: isAlreadyOpen for "${targetFolder}" is evaluated as:`, isAlreadyOpen);
                 }
                 
                 if (!isAlreadyOpen) {
                     const accordions = await this.findAllAccordionHeaders(targetFolder);
+                    console.log(`[DigikarAutoInput] Found ${accordions.length} accordions for target folder "${targetFolder}" to expand.`);
                     if (accordions.length > 0) {
                         this.log(`フォルダ「${targetFolder}」を展開します。`);
                         for (let acc of accordions) {
@@ -984,13 +997,13 @@
                     }
                 } else {
                     this.log(`フォルダ「${targetFolder}」はすでに展開されています。`);
+                    console.log(`[DigikarAutoInput] Skipping click for "${targetFolder}" because it's already open.`);
                 }
             }
         }
 
         async findAllAccordionHeaders(folderName) {
-            // カッコ（全角・半角）やスペースを除去して正規化し、表記揺れを防ぐ
-            const normalize = (str) => (str || "").replace(/[\s　()（）]/g, '').toLowerCase();
+            const normalize = (str) => (str || "").replace(/[\s　]/g, '').toLowerCase();
             const targetNorm = normalize(folderName);
             console.log(`[DigikarAutoInput] findAllAccordionHeaders: searching for "${folderName}" (normalized: "${targetNorm}")`);
 
@@ -1005,6 +1018,7 @@
                     const children = Array.from(el.querySelectorAll('div, span, p, a'));
                     const hasChildWithSameText = children.some(child => normalize(child.innerText || "").trim() === targetNorm);
                     if (!hasChildWithSameText) {
+                        console.log(`[DigikarAutoInput] PERFECT match found:`, el, `| Original text: "${text}"`);
                         results.push(el);
                     }
                 }
@@ -1016,12 +1030,13 @@
             }
 
             // 2. 部分一致でテキスト長が短い要素を収集
+            console.log(`[DigikarAutoInput] No perfect matches for "${folderName}". Trying partial matches...`);
             const partMatches = [];
             for (let el of elements) {
                 const text = el.innerText ? el.innerText.trim() : "";
                 const normText = normalize(text);
                 if (normText.includes(targetNorm) && text.length > 0) {
-                    partMatches.push({ el, length: text.length });
+                    partMatches.push({ el, length: text.length, text });
                 }
             }
 
@@ -1029,11 +1044,13 @@
             partMatches.sort((a, b) => a.length - b.length);
             if (partMatches.length > 0) {
                 const minLength = partMatches[0].length;
-                const filtered = partMatches.filter(m => m.length <= minLength + 5).map(m => m.el);
-                console.log(`[DigikarAutoInput] Partial match elements found (length close to ${minLength}): ${filtered.length}`, filtered);
-                return filtered;
+                const filtered = partMatches.filter(m => m.length <= minLength + 5);
+                console.log(`[DigikarAutoInput] Partial match elements found (length close to ${minLength}):`, filtered);
+                const filteredElements = filtered.map(m => m.el);
+                return filteredElements;
             }
 
+            console.log(`[DigikarAutoInput] No matches at all for folder: "${folderName}"`);
             return [];
         }
 
