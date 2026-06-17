@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         M3デジカル 受付画面起点・自動セット入力ツール
 // @namespace    http://tampermonkey.net/
-// @version      2.4
+// @version      2.5
 // @description  デジカル受付画面から透析患者カルテへ順次遷移し、セット適用・一時保存・帰還を自動ループ処理します
 // @author       Antigravity
 // @match        https://*.digikar.jp/reception/*
@@ -938,7 +938,7 @@
                 await sleep(800); // ポップアップ出現までの遅延
 
                 // 確認ポップアップの自動処理
-                await this.clickConfirmPopupSendButton();
+                await this.handleConfirmPopups();
                 
                 // 処理成功として次の患者に進む
                 this.currentIndex++;
@@ -1061,26 +1061,52 @@
             return null;
         }
 
-        async clickConfirmPopupSendButton() {
-            this.log("レセコン送信確認ポップアップの出現を待機しています...");
+        async handleConfirmPopups() {
+            this.log("確認ポップアップ/警告一覧の出現を待機しています...");
             const start = Date.now();
-            while (Date.now() - start < 5000) {
-                // ポップアップと思われるダイアログ要素、または「レセコンへ会計情報...」を含む要素を検索
+            let hasHandledWarning = false;
+            let hasHandledSend = false;
+
+            // 最大8秒間、各種ポップアップの出現を監視・処理する
+            while (Date.now() - start < 8000) {
+                // すべてのdivとdialog要素を取得
                 const elements = Array.from(document.querySelectorAll('div, [role="dialog"]'));
-                const dialog = elements.find(el => el.innerText && el.innerText.includes("レセコンへ会計情報を送信しますか？"));
-                if (dialog) {
-                    // ダイアログ内の「送信」ボタン（通常は緑色）を探す
-                    const buttons = Array.from(dialog.querySelectorAll('button'));
-                    const sendBtn = buttons.find(b => b.innerText.trim() === "送信");
-                    if (sendBtn) {
-                        this.log("確認ポップアップの「送信」ボタンをクリックします。");
-                        sendBtn.click();
-                        return true;
+
+                // ① 警告一覧のチェック
+                if (!hasHandledWarning) {
+                    const warningDialog = elements.find(el => el.innerText && el.innerText.includes("警告一覧") && el.innerText.includes("確認が必要な警告があります"));
+                    if (warningDialog) {
+                        // 警告ダイアログ内の「保存」ボタンを探す
+                        const buttons = Array.from(warningDialog.querySelectorAll('button'));
+                        const saveBtn = buttons.find(b => b.innerText.trim() === "保存");
+                        if (saveBtn) {
+                            this.log("⚠️ 警告一覧を検出しました。「保存」ボタンをクリックします。");
+                            saveBtn.click();
+                            hasHandledWarning = true;
+                            await sleep(1000); // 遷移や次のポップアップ出現を待つ
+                            continue; // ループの最初に戻って再チェック
+                        }
                     }
                 }
-                await sleep(250);
+
+                // ② レセコン送信確認ダイアログのチェック
+                if (!hasHandledSend) {
+                    const sendDialog = elements.find(el => el.innerText && el.innerText.includes("レセコンへ会計情報を送信しますか？"));
+                    if (sendDialog) {
+                        const buttons = Array.from(sendDialog.querySelectorAll('button'));
+                        const sendBtn = buttons.find(b => b.innerText.trim() === "送信");
+                        if (sendBtn) {
+                            this.log("確認ポップアップの「送信」ボタンをクリックします。");
+                            sendBtn.click();
+                            hasHandledSend = true;
+                            return true; // 最終的な送信が完了したので終了
+                        }
+                    }
+                }
+
+                await sleep(300);
             }
-            this.log("⚠️ 確認ポップアップ（送信ボタン）が検出されませんでした。保存がそのまま完了した可能性があります。");
+            this.log("⚠️ ポップアップの監視がタイムアウトしました。");
             return false;
         }
 
