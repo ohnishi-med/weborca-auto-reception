@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         M3デジカル 受付画面起点・自動セット入力ツール
 // @namespace    http://tampermonkey.net/
-// @version      2.8
+// @version      2.9
 // @description  デジカル受付画面から透析患者カルテへ順次遷移し、セット適用・一時保存・帰還を自動ループ処理します
 // @author       Antigravity
 // @match        https://*.digikar.jp/reception/*
@@ -343,7 +343,12 @@
             });
 
             // 保存されている値を取得して設定
-            const savedFolder = GM_getValue('digikar_folder_name', '透析回診 > 自動算定入力');
+            let savedFolder = GM_getValue('digikar_folder_name', '透析回診 > 自動算定入力');
+            // マイグレーション: 旧デフォルト値 '透析回診' を新デフォルト値 '透析回診 > 自動算定入力' に自動アップグレード
+            if (savedFolder === '透析回診') {
+                savedFolder = '透析回診 > 自動算定入力';
+                GM_setValue('digikar_folder_name', savedFolder);
+            }
             const savedRegularFolder = GM_getValue('digikar_regular_folder_name', '透析回診');
             folderInput.value = savedFolder;
             regularFolderInput.value = savedRegularFolder;
@@ -964,6 +969,12 @@
                     if (accordions.length > 0) {
                         this.log(`フォルダ「${targetFolder}」を展開します。`);
                         for (let acc of accordions) {
+                            // 既にアコーディオンが開いている（下向き矢印等）なら誤開閉を避けるためクリックしない
+                            if (this.isAccordionOpen(acc)) {
+                                console.log(`[DigikarAutoInput] Accordion "${targetFolder}" is already open. Skipping click.`);
+                                continue;
+                            }
+                            
                             // React/SPA対策: 最も近い親のクリック可能な要素（divや[role="button"]等）をターゲットにする
                             const clickTarget = acc.closest('[role="button"]') || acc.closest('button') || acc.closest('div') || acc;
                             console.log(`[DigikarAutoInput] Clicking accordion element:`, clickTarget);
@@ -981,6 +992,30 @@
                     this.log(`フォルダ「${targetFolder}」はすでに展開されています。`);
                 }
             }
+        }
+
+        isAccordionOpen(el) {
+            if (!el) return false;
+            
+            // 1. 属性による判定
+            const ariaExpanded = el.getAttribute('aria-expanded') || el.closest('[aria-expanded]')?.getAttribute('aria-expanded');
+            if (ariaExpanded === 'true') return true;
+            if (ariaExpanded === 'false') return false;
+            
+            // 2. クラス名による判定
+            const container = el.closest('div') || el;
+            const classStr = container.className ? String(container.className).toLowerCase() : "";
+            if (classStr.includes('open') || classStr.includes('expanded') || classStr.includes('active')) {
+                return true;
+            }
+            
+            // 3. テキストの矢印文字による判定 (▼や▾などの下向き矢印が含まれるか)
+            const fullText = (container.innerText || el.innerText || "").trim();
+            if (/[▼▾▾▲▲]/.test(fullText)) {
+                return true;
+            }
+            
+            return false;
         }
 
         async findAllAccordionHeaders(folderName) {
