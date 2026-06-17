@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         M3デジカル 受付画面起点・自動セット入力ツール
 // @namespace    http://tampermonkey.net/
-// @version      3.4
+// @version      3.5
 // @description  デジカル受付画面から透析患者カルテへ順次遷移し、セット適用・一時保存・帰還を自動ループ処理します
 // @author       Antigravity
 // @match        https://*.digikar.jp/reception/*
@@ -1018,25 +1018,33 @@
                     const children = Array.from(el.querySelectorAll('div, span, p, a'));
                     const hasChildWithSameText = children.some(child => normalize(child.innerText || "").trim() === targetNorm);
                     if (!hasChildWithSameText) {
-                        console.log(`[DigikarAutoInput] PERFECT match found:`, el, `| Original text: "${text}"`);
-                        results.push(el);
+                        // 画面の右側にある要素のみを対象とする
+                        const rect = el.getBoundingClientRect();
+                        if (rect.left > window.innerWidth * 0.45) {
+                            console.log(`[DigikarAutoInput] PERFECT match found in right panel:`, el, `| Original text: "${text}"`);
+                            results.push(el);
+                        }
                     }
                 }
             }
 
             if (results.length > 0) {
-                console.log(`[DigikarAutoInput] Perfect match elements found: ${results.length}`, results);
+                console.log(`[DigikarAutoInput] Perfect match elements found in right panel: ${results.length}`, results);
                 return results;
             }
 
             // 2. 部分一致でテキスト長が短い要素を収集
-            console.log(`[DigikarAutoInput] No perfect matches for "${folderName}". Trying partial matches...`);
+            console.log(`[DigikarAutoInput] No perfect matches for "${folderName}". Trying partial matches in right panel...`);
             const partMatches = [];
             for (let el of elements) {
                 const text = el.innerText ? el.innerText.trim() : "";
                 const normText = normalize(text);
                 if (normText.includes(targetNorm) && text.length > 0) {
-                    partMatches.push({ el, length: text.length, text });
+                    // 画面の右側にある要素のみを対象とする
+                    const rect = el.getBoundingClientRect();
+                    if (rect.left > window.innerWidth * 0.45) {
+                        partMatches.push({ el, length: text.length, text });
+                    }
                 }
             }
 
@@ -1045,12 +1053,12 @@
             if (partMatches.length > 0) {
                 const minLength = partMatches[0].length;
                 const filtered = partMatches.filter(m => m.length <= minLength + 5);
-                console.log(`[DigikarAutoInput] Partial match elements found (length close to ${minLength}):`, filtered);
+                console.log(`[DigikarAutoInput] Partial match elements found in right panel (length close to ${minLength}):`, filtered);
                 const filteredElements = filtered.map(m => m.el);
                 return filteredElements;
             }
 
-            console.log(`[DigikarAutoInput] No matches at all for folder: "${folderName}"`);
+            console.log(`[DigikarAutoInput] No matches at all in right panel for folder: "${folderName}"`);
             return [];
         }
 
@@ -1071,8 +1079,14 @@
                 for (let el of items) {
                     const text = el.innerText.trim();
                     if (normalize(text).includes(targetNorm) && text.length > 0) {
-                        console.log(`[DigikarAutoInput] Match found! Text: "${text}", Element:`, el);
-                        return el;
+                        // 画面の右半分（入力支援パネル側）にある要素のみを対象とする
+                        const rect = el.getBoundingClientRect();
+                        if (rect.left > window.innerWidth * 0.45) {
+                            console.log(`[DigikarAutoInput] Match found in right panel! Text: "${text}", Element:`, el);
+                            return el;
+                        } else {
+                            console.log(`[DigikarAutoInput] Ignore match outside right panel (left: ${rect.left}, window: ${window.innerWidth}): "${text}"`);
+                        }
                     }
                 }
                 await sleep(250);
