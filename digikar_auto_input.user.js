@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         M3デジカル 受付画面起点・自動セット入力ツール
 // @namespace    http://tampermonkey.net/
-// @version      2.3
+// @version      2.4
 // @description  デジカル受付画面から透析患者カルテへ順次遷移し、セット適用・一時保存・帰還を自動ループ処理します
 // @author       Antigravity
 // @match        https://*.digikar.jp/reception/*
@@ -859,27 +859,30 @@
                         const parentFolderName = GM_getValue('digikar_folder_name', '透析回診');
                         this.log(`フォルダ「${parentFolderName}」 > 「${subFolderName}」の展開を試みます...`);
                         
-                        // 親フォルダがすでに開いているかチェック（サブアコーディオンが可視か）
-                        const subAccordionsVisible = await this.findAllAccordionHeaders(subFolderName);
-                        const isSubVisible = subAccordionsVisible.some(acc => acc.offsetParent !== null);
+                        // 1. 親フォルダ「透析回診」が開いているかチェック (子フォルダ「定期処方(曜日)」が見えているか)
+                        const subAccordions = await this.findAllAccordionHeaders(subFolderName);
+                        const isSubVisible = subAccordions.some(acc => acc.offsetParent !== null);
                         
                         if (!isSubVisible) {
+                            this.log(`親フォルダ「${parentFolderName}」を展開します。`);
                             const parentAccordions = await this.findAllAccordionHeaders(parentFolderName);
                             for (let acc of parentAccordions) {
                                 acc.click();
-                                await sleep(800);
                             }
+                            await sleep(1000); // 展開アニメーションを待つ
                         }
 
-                        // 子フォルダ「定期処方（曜日）」の展開
-                        const subAccordions = await this.findAllAccordionHeaders(subFolderName);
-                        for (let acc of subAccordions) {
-                            // 既にセットが見えていればクリックしない
-                            const setElement = await this.findSetElement(regularSetName, 500);
-                            if (!setElement) {
+                        // 2. 子フォルダ「定期処方（曜日）」が開いているかチェック (目的のセット「auto定期_氏名」が見えているか)
+                        const testSetEl = await this.findSetElement(regularSetName, 1000);
+                        const isSetVisible = testSetEl && testSetEl.offsetParent !== null;
+
+                        if (!isSetVisible) {
+                            this.log(`子フォルダ「${subFolderName}」を展開します...`);
+                            const subAccordionsToClick = await this.findAllAccordionHeaders(subFolderName);
+                            for (let acc of subAccordionsToClick) {
                                 acc.click();
-                                await sleep(800);
                             }
+                            await sleep(1000);
                         }
 
                         matchedRegularSet = await this.findSetElement(regularSetName, 2000);
