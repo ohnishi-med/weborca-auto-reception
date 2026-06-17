@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         M3デジカル 受付画面起点・自動セット入力ツール
 // @namespace    http://tampermonkey.net/
-// @version      3.7
+// @version      3.8
 // @description  デジカル受付画面から透析患者カルテへ順次遷移し、セット適用・一時保存・帰還を自動ループ処理します
 // @author       Antigravity
 // @match        https://*.digikar.jp/reception/*
@@ -1122,9 +1122,9 @@
                 if (!hasHandledWarning) {
                     const warningDialog = elements.find(el => el.innerText && el.innerText.includes("警告一覧") && el.innerText.includes("確認が必要な警告があります"));
                     if (warningDialog) {
-                        // 警告ダイアログ内の「保存」ボタンを探す
-                        const buttons = Array.from(warningDialog.querySelectorAll('button'));
-                        const saveBtn = buttons.find(b => b.innerText.trim() === "保存");
+                        // 警告ダイアログ内の「保存」ボタンを探す (button以外のタグ構成も考慮)
+                        const clickableElements = Array.from(warningDialog.querySelectorAll('button, div, span, [role="button"]'));
+                        const saveBtn = clickableElements.find(b => b.innerText && b.innerText.trim() === "保存");
                         if (saveBtn) {
                             this.log("⚠️ 警告一覧を検出しました。「保存」ボタンをクリックします。");
                             saveBtn.click();
