@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         M3デジカル 受付画面起点・自動セット入力ツール
 // @namespace    http://tampermonkey.net/
-// @version      2.5
+// @version      2.6
 // @description  デジカル受付画面から透析患者カルテへ順次遷移し、セット適用・一時保存・帰還を自動ループ処理します
 // @author       Antigravity
 // @match        https://*.digikar.jp/reception/*
@@ -273,14 +273,22 @@
                             </svg>
                             透析患者リスト
                         </a>
-                        <span class="digikar-settings-toggle" id="digikar-auto-settings-toggle" style="margin-top: 0;">⚙️ フォルダ設定</span>
+                        <span class="digikar-settings-toggle" id="digikar-auto-settings-toggle" style="margin-top: 0;">⚙️ フォルダ・階層設定</span>
                     </div>
-                    <div class="digikar-settings-area" id="digikar-auto-settings-area" style="display: none;">
+                    <div class="digikar-settings-area" id="digikar-auto-settings-area" style="display: none; max-height: 240px; overflow-y: auto;">
                         <div class="digikar-input-group">
-                            <label>セットフォルダ名:</label>
+                            <label style="font-size: 10px;">算定・カルテ用のフォルダ階層 (例: 透析回診):</label>
                             <input type="text" class="digikar-input-text" id="digikar-auto-folder-name" placeholder="透析回診">
                         </div>
-                        <button class="digikar-btn-primary" id="digikar-auto-save-settings" style="margin-top: 4px; padding: 5px; font-size: 11px;">設定を保存</button>
+                        <div class="digikar-input-group" style="margin-top: 6px;">
+                            <label style="font-size: 10px;">定期処方用の親フォルダ階層 (例: 透析回診):</label>
+                            <input type="text" class="digikar-input-text" id="digikar-auto-regular-folder-name" placeholder="透析回診">
+                        </div>
+                        <div style="font-size: 9px; color: #64748b; margin-top: 6px; line-height: 1.3;">
+                            ※ 「フォルダ > 子フォルダ」のように &gt; で繋げて複数階層を指定できます。<br/>
+                            ※ 定期処方では、設定した親フォルダの配下に曜日フォルダ（例: 定期処方（月水金））が自動的に連結されて展開されます。
+                        </div>
+                        <button class="digikar-btn-primary" id="digikar-auto-save-settings" style="margin-top: 8px; padding: 5px; font-size: 11px;">設定を保存</button>
                     </div>
                     <div id="digikar-auto-status">ログ: 待機中...</div>
                 </div>
@@ -296,6 +304,7 @@
             const settingsToggle = div.querySelector('#digikar-auto-settings-toggle');
             const settingsArea = div.querySelector('#digikar-auto-settings-area');
             const folderInput = div.querySelector('#digikar-auto-folder-name');
+            const regularFolderInput = div.querySelector('#digikar-auto-regular-folder-name');
             const saveSettingsBtn = div.querySelector('#digikar-auto-save-settings');
 
             const minimizeBtn = div.querySelector('#digikar-auto-minimize');
@@ -335,7 +344,9 @@
 
             // 保存されている値を取得して設定
             const savedFolder = GM_getValue('digikar_folder_name', '透析回診');
+            const savedRegularFolder = GM_getValue('digikar_regular_folder_name', '透析回診');
             folderInput.value = savedFolder;
+            regularFolderInput.value = savedRegularFolder;
 
             settingsToggle.addEventListener('click', () => {
                 const isHidden = settingsArea.style.display === 'none';
@@ -344,9 +355,11 @@
 
             saveSettingsBtn.addEventListener('click', () => {
                 const val = folderInput.value.trim();
-                if (val) {
+                const valReg = regularFolderInput.value.trim();
+                if (val && valReg) {
                     GM_setValue('digikar_folder_name', val);
-                    this.log(`フォルダ名を「${val}」に保存しました。`);
+                    GM_setValue('digikar_regular_folder_name', valReg);
+                    this.log(`設定（算定:「${val}」/ 定期:「${valReg}」）を保存しました。`);
                     settingsArea.style.display = 'none';
                 } else {
                     alert("フォルダ名を入力してください。");
@@ -748,46 +761,12 @@
                     }
 
                     if (!matchedSetElement) {
-                        // 見つからない場合、アコーディオンが閉じている可能性があるので、フォルダを展開
-                        const folderName = GM_getValue('digikar_folder_name', '透析回診');
-                        this.log(`セットが見つかりません。フォルダ「${folderName}」の多階層展開を試みます...`);
-                        console.log(`[DigikarAutoInput] Set not found in current view. Starting multi-depth folder expansion for: "${folderName}"`);
+                        const folderPath = GM_getValue('digikar_folder_name', '透析回診');
+                        this.log(`セットが見つかりません。フォルダ「${folderPath}」の多階層展開を試みます...`);
+                        await this.expandMultiDepthFolders(folderPath);
                         
-                        // 最大3階層までアコーディオン展開を繰り返す
-                        for (let depth = 0; depth < 3; depth++) {
-                            console.log(`[DigikarAutoInput] Folder expansion depth ${depth + 1}...`);
-                            const accordions = await this.findAllAccordionHeaders(folderName);
-                            
-                            if (accordions.length > 0) {
-                                console.log(`[DigikarAutoInput] Found ${accordions.length} matching folders at depth ${depth + 1}. Clicking...`);
-                                for (let i = 0; i < accordions.length; i++) {
-                                    console.log(`[DigikarAutoInput] Clicking folder element:`, accordions[i]);
-                                    accordions[i].click();
-                                    await sleep(1000); // 展開アニメーションを待つ
-                                }
-                                
-                                // 展開した段階でセットが見つかるか中間チェック
-                                console.log(`[DigikarAutoInput] Middle check for set items at depth ${depth + 1}...`);
-                                for (const setName of candidates) {
-                                    matchedSetElement = await this.findSetElement(setName, 1500);
-                                    if (matchedSetElement) {
-                                        appliedSetName = setName;
-                                        break;
-                                    }
-                                }
-                                if (matchedSetElement) {
-                                    console.log(`[DigikarAutoInput] Set successfully found at depth ${depth + 1}!`);
-                                    break;
-                                }
-                            } else {
-                                console.log(`[DigikarAutoInput] No matching folders found at depth ${depth + 1}. Ending depth loop.`);
-                                break;
-                            }
-                        }
-                        
-                        if (!matchedSetElement) {
-                            this.log(`⚠️ フォルダ「${folderName}」をすべて展開しましたが、セットが見つかりませんでした。`);
-                        }
+                        // 展開後に最終確認
+                        matchedSetElement = await this.findSetElement(setName, 2000);
                     }
 
                     if (matchedSetElement) {
@@ -856,35 +835,12 @@
                     let matchedRegularSet = await this.findSetElement(regularSetName, 1500);
 
                     if (!matchedRegularSet) {
-                        const parentFolderName = GM_getValue('digikar_folder_name', '透析回診');
-                        this.log(`フォルダ「${parentFolderName}」 > 「${subFolderName}」の展開を試みます...`);
+                        const parentFolderPath = GM_getValue('digikar_regular_folder_name', '透析回診');
+                        const fullFolderPath = parentFolderPath ? `${parentFolderPath} > ${subFolderName}` : subFolderName;
+                        this.log(`セットが見つかりません。フォルダ「${fullFolderPath}」の多階層展開を試みます...`);
+                        await this.expandMultiDepthFolders(fullFolderPath);
                         
-                        // 1. 親フォルダ「透析回診」が開いているかチェック (子フォルダ「定期処方(曜日)」が見えているか)
-                        const subAccordions = await this.findAllAccordionHeaders(subFolderName);
-                        const isSubVisible = subAccordions.some(acc => acc.offsetParent !== null);
-                        
-                        if (!isSubVisible) {
-                            this.log(`親フォルダ「${parentFolderName}」を展開します。`);
-                            const parentAccordions = await this.findAllAccordionHeaders(parentFolderName);
-                            for (let acc of parentAccordions) {
-                                acc.click();
-                            }
-                            await sleep(1000); // 展開アニメーションを待つ
-                        }
-
-                        // 2. 子フォルダ「定期処方（曜日）」が開いているかチェック (目的のセット「auto定期_氏名」が見えているか)
-                        const testSetEl = await this.findSetElement(regularSetName, 1000);
-                        const isSetVisible = testSetEl && testSetEl.offsetParent !== null;
-
-                        if (!isSetVisible) {
-                            this.log(`子フォルダ「${subFolderName}」を展開します...`);
-                            const subAccordionsToClick = await this.findAllAccordionHeaders(subFolderName);
-                            for (let acc of subAccordionsToClick) {
-                                acc.click();
-                            }
-                            await sleep(1000);
-                        }
-
+                        // 展開後に最終確認
                         matchedRegularSet = await this.findSetElement(regularSetName, 2000);
                     }
 
@@ -984,6 +940,40 @@
                 }
             }
             return null;
+        }
+
+        async expandMultiDepthFolders(fullPathStr) {
+            if (!fullPathStr) return;
+            const folderNames = fullPathStr.split('>').map(s => s.trim()).filter(Boolean);
+            
+            this.log(`アコーディオン展開を開始: ${folderNames.join(' > ')}`);
+            
+            for (let i = 0; i < folderNames.length; i++) {
+                const targetFolder = folderNames[i];
+                let isAlreadyOpen = false;
+                
+                // 次の階層のフォルダが存在する場合、それが画面上に見えているかチェックする
+                if (i < folderNames.length - 1) {
+                    const nextFolder = folderNames[i + 1];
+                    const nextAccordions = await this.findAllAccordionHeaders(nextFolder);
+                    isAlreadyOpen = nextAccordions.some(acc => acc.offsetParent !== null);
+                }
+                
+                if (!isAlreadyOpen) {
+                    const accordions = await this.findAllAccordionHeaders(targetFolder);
+                    if (accordions.length > 0) {
+                        this.log(`フォルダ「${targetFolder}」を展開します。`);
+                        for (let acc of accordions) {
+                            acc.click();
+                        }
+                        await sleep(1000); // アニメーション待機
+                    } else {
+                        this.log(`⚠️ フォルダ「${targetFolder}」が見つかりませんでした。`);
+                    }
+                } else {
+                    this.log(`フォルダ「${targetFolder}」はすでに展開されています。`);
+                }
+            }
         }
 
         async findAllAccordionHeaders(folderName) {
