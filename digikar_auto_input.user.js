@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         M3デジカル 受付画面起点・自動セット入力ツール
 // @namespace    http://tampermonkey.net/
-// @version      2.6
+// @version      2.7
 // @description  デジカル受付画面から透析患者カルテへ順次遷移し、セット適用・一時保存・帰還を自動ループ処理します
 // @author       Antigravity
 // @match        https://*.digikar.jp/reception/*
@@ -277,8 +277,8 @@
                     </div>
                     <div class="digikar-settings-area" id="digikar-auto-settings-area" style="display: none; max-height: 240px; overflow-y: auto;">
                         <div class="digikar-input-group">
-                            <label style="font-size: 10px;">算定・カルテ用のフォルダ階層 (例: 透析回診):</label>
-                            <input type="text" class="digikar-input-text" id="digikar-auto-folder-name" placeholder="透析回診">
+                            <label style="font-size: 10px;">算定・カルテ用のフォルダ階層 (例: 透析回診 &gt; 自動算定入力):</label>
+                            <input type="text" class="digikar-input-text" id="digikar-auto-folder-name" placeholder="透析回診 > 自動算定入力">
                         </div>
                         <div class="digikar-input-group" style="margin-top: 6px;">
                             <label style="font-size: 10px;">定期処方用の親フォルダ階層 (例: 透析回診):</label>
@@ -343,7 +343,7 @@
             });
 
             // 保存されている値を取得して設定
-            const savedFolder = GM_getValue('digikar_folder_name', '透析回診');
+            const savedFolder = GM_getValue('digikar_folder_name', '透析回診 > 自動算定入力');
             const savedRegularFolder = GM_getValue('digikar_regular_folder_name', '透析回診');
             folderInput.value = savedFolder;
             regularFolderInput.value = savedRegularFolder;
@@ -761,7 +761,7 @@
                     }
 
                     if (!matchedSetElement) {
-                        const folderPath = GM_getValue('digikar_folder_name', '透析回診');
+                        const folderPath = GM_getValue('digikar_folder_name', '透析回診 > 自動算定入力');
                         this.log(`セットが見つかりません。フォルダ「${folderPath}」の多階層展開を試みます...`);
                         await this.expandMultiDepthFolders(folderPath);
                         
