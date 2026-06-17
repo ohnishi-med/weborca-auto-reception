@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         M3デジカル 受付画面起点・自動セット入力ツール
 // @namespace    http://tampermonkey.net/
-// @version      2.7
+// @version      2.8
 // @description  デジカル受付画面から透析患者カルテへ順次遷移し、セット適用・一時保存・帰還を自動ループ処理します
 // @author       Antigravity
 // @match        https://*.digikar.jp/reception/*
@@ -964,7 +964,14 @@
                     if (accordions.length > 0) {
                         this.log(`フォルダ「${targetFolder}」を展開します。`);
                         for (let acc of accordions) {
-                            acc.click();
+                            // React/SPA対策: 最も近い親のクリック可能な要素（divや[role="button"]等）をターゲットにする
+                            const clickTarget = acc.closest('[role="button"]') || acc.closest('button') || acc.closest('div') || acc;
+                            console.log(`[DigikarAutoInput] Clicking accordion element:`, clickTarget);
+                            
+                            const eventOptions = { bubbles: true, cancelable: true, view: window };
+                            clickTarget.dispatchEvent(new MouseEvent('mousedown', eventOptions));
+                            clickTarget.dispatchEvent(new MouseEvent('mouseup', eventOptions));
+                            clickTarget.click();
                         }
                         await sleep(1000); // アニメーション待機
                     } else {
@@ -977,7 +984,8 @@
         }
 
         async findAllAccordionHeaders(folderName) {
-            const normalize = (str) => (str || "").replace(/[\s　]/g, '').toLowerCase();
+            // フォルダ名やinnerTextに含まれるアコーディオンの矢印記号（▶や▼など）を除去して正規化
+            const normalize = (str) => (str || "").replace(/[\s　▶▼▸▾►▼◁▷▲▼]/g, '').toLowerCase();
             const targetNorm = normalize(folderName);
             console.log(`[DigikarAutoInput] findAllAccordionHeaders: searching for "${folderName}" (normalized: "${targetNorm}")`);
 
