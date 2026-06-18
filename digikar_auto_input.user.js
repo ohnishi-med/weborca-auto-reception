@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         M3デジカル 受付画面起点・自動セット入力ツール
 // @namespace    http://tampermonkey.net/
-// @version      4.1
+// @version      4.2
 // @description  デジカル受付画面から透析患者カルテへ順次遷移し、セット適用・一時保存・帰還を自動ループ処理します
 // @author       Antigravity
 // @match        https://*.digikar.jp/reception/*
@@ -383,13 +383,26 @@
             let startX, startY;
             let initialX, initialY;
 
-            // 初期位置を復元
+            // 初期位置を復元 (画面外にはみ出している場合は安全のためにリセット)
             const savedTop = localStorage.getItem('digikar_panel_top');
             const savedLeft = localStorage.getItem('digikar_panel_left');
             if (savedTop !== null && savedLeft !== null) {
-                div.style.top = savedTop;
-                div.style.left = savedLeft;
-                div.style.right = 'auto'; // 右端固定を解除
+                const topVal = parseInt(savedTop, 10);
+                const leftVal = parseInt(savedLeft, 10);
+                
+                // 現在のウィンドウサイズに収まっているかチェック (はみ出し防止マージンを考慮)
+                const isWithinWindow = (leftVal >= 0 && leftVal < window.innerWidth - 150) &&
+                                       (topVal >= 0 && topVal < window.innerHeight - 50);
+                
+                if (isWithinWindow) {
+                    div.style.top = savedTop;
+                    div.style.left = savedLeft;
+                    div.style.right = 'auto'; // 右端固定を解除
+                } else {
+                    console.log(`[DigikarAutoInput] Reset panel position (out of bounds: top=${savedTop}, left=${savedLeft})`);
+                    localStorage.removeItem('digikar_panel_top');
+                    localStorage.removeItem('digikar_panel_left');
+                }
             }
 
             header.addEventListener('mousedown', (e) => {
