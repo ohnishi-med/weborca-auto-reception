@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         M3デジカル 受付画面起点・自動セット入力ツール
 // @namespace    http://tampermonkey.net/
-// @version      4.0
+// @version      4.1
 // @description  デジカル受付画面から透析患者カルテへ順次遷移し、セット適用・一時保存・帰還を自動ループ処理します
 // @author       Antigravity
 // @match        https://*.digikar.jp/reception/*
@@ -1134,8 +1134,8 @@
 
                         if (saveBtn) {
                             this.log("⚠️ 警告一覧を検出しました。「保存」ボタンをクリックします。");
-                            // React/SPA対応のマウスクリックシーケンス
-                            const eventOptions = { bubbles: true, cancelable: true, view: window };
+                            // React/SPA対応のマウスクリックシーケンス（viewオプションを省略してTypeErrorを回避）
+                            const eventOptions = { bubbles: true, cancelable: true };
                             saveBtn.dispatchEvent(new MouseEvent('mousedown', eventOptions));
                             saveBtn.dispatchEvent(new MouseEvent('mouseup', eventOptions));
                             saveBtn.click();
