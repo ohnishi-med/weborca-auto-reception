@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         M3デジカル 受付画面起点・自動セット入力ツール
 // @namespace    http://tampermonkey.net/
-// @version      3.8
+// @version      3.9
 // @description  デジカル受付画面から透析患者カルテへ順次遷移し、セット適用・一時保存・帰還を自動ループ処理します
 // @author       Antigravity
 // @match        https://*.digikar.jp/reception/*
@@ -1113,8 +1113,8 @@
             let hasHandledWarning = false;
             let hasHandledSend = false;
 
-            // 最大8秒間、各種ポップアップの出現を監視・処理する
-            while (Date.now() - start < 8000) {
+            // 最大10秒間、各種ポップアップの出現を監視・処理する
+            while (Date.now() - start < 10000) {
                 // すべてのdivとdialog要素を取得
                 const elements = Array.from(document.querySelectorAll('div, [role="dialog"]'));
 
@@ -1129,7 +1129,7 @@
                             this.log("⚠️ 警告一覧を検出しました。「保存」ボタンをクリックします。");
                             saveBtn.click();
                             hasHandledWarning = true;
-                            await sleep(1000); // 遷移や次のポップアップ出現を待つ
+                            await sleep(1500); // 遷移や次のポップアップ出現を待つ
                             continue; // ループの最初に戻って再チェック
                         }
                     }
@@ -1145,8 +1145,25 @@
                             this.log("確認ポップアップの「送信」ボタンをクリックします。");
                             sendBtn.click();
                             hasHandledSend = true;
-                            return true; // 最終的な送信が完了したので終了
+                            // 送信クリック後、さらに「警告一覧」が出る可能性があるため、
+                            // 即時終了せずループを継続して監視する
+                            await sleep(1500);
+                            continue;
                         }
+                    }
+                }
+
+                // 送信処理または警告処理を実行したあと、画面上にダイアログが残っていなければ完了とする
+                if (hasHandledSend || hasHandledWarning) {
+                    await sleep(1500); // 画面が完全に落ち着く（または遷移が始まる）のを待つ
+                    const finalElements = Array.from(document.querySelectorAll('div, [role="dialog"]'));
+                    const hasActiveDialog = finalElements.some(el => el.innerText && (
+                        (el.innerText.includes("警告一覧") && el.innerText.includes("確認が必要な警告があります")) ||
+                        el.innerText.includes("レセコンへ会計情報を送信しますか？")
+                    ));
+                    if (!hasActiveDialog) {
+                        this.log("ポップアップ処理が正常に完了しました。");
+                        return true;
                     }
                 }
 
