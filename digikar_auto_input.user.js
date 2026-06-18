@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         M3デジカル 受付画面起点・自動セット入力ツール
 // @namespace    http://tampermonkey.net/
-// @version      3.9
+// @version      4.0
 // @description  デジカル受付画面から透析患者カルテへ順次遷移し、セット適用・一時保存・帰還を自動ループ処理します
 // @author       Antigravity
 // @match        https://*.digikar.jp/reception/*
@@ -1122,12 +1122,24 @@
                 if (!hasHandledWarning) {
                     const warningDialog = elements.find(el => el.innerText && el.innerText.includes("警告一覧") && el.innerText.includes("確認が必要な警告があります"));
                     if (warningDialog) {
-                        // 警告ダイアログ内の「保存」ボタンを探す (button以外のタグ構成も考慮)
-                        const clickableElements = Array.from(warningDialog.querySelectorAll('button, div, span, [role="button"]'));
-                        const saveBtn = clickableElements.find(b => b.innerText && b.innerText.trim() === "保存");
+                        // 1. まず button タグから最優先で探す（ラッパーdivなどの誤検出防止）
+                        let saveBtn = Array.from(warningDialog.querySelectorAll('button'))
+                            .find(b => b.innerText && b.innerText.trim() === "保存");
+
+                        // 2. button がなければ div, span, [role="button"] から広く探す
+                        if (!saveBtn) {
+                            const candidates = Array.from(warningDialog.querySelectorAll('div, span, [role="button"]'));
+                            saveBtn = candidates.find(b => b.innerText && b.innerText.trim() === "保存");
+                        }
+
                         if (saveBtn) {
                             this.log("⚠️ 警告一覧を検出しました。「保存」ボタンをクリックします。");
+                            // React/SPA対応のマウスクリックシーケンス
+                            const eventOptions = { bubbles: true, cancelable: true, view: window };
+                            saveBtn.dispatchEvent(new MouseEvent('mousedown', eventOptions));
+                            saveBtn.dispatchEvent(new MouseEvent('mouseup', eventOptions));
                             saveBtn.click();
+                            
                             hasHandledWarning = true;
                             await sleep(1500); // 遷移や次のポップアップ出現を待つ
                             continue; // ループの最初に戻って再チェック
