@@ -523,14 +523,44 @@
                             const determineSetJS = (date, cool) => {
                                 const dayNum = date.getDate();
                                 const dayOfWeek = date.getDay(); // 0:日, 1:月, 2:火, 3:水, 4:木, 5:金, 6:土
-                                const isFirstMonOrTue = (dayNum <= 7) && (dayOfWeek === 1 || dayOfWeek === 2);
+                                const year = date.getFullYear();
+                                const month = date.getMonth();
 
-                                // クールの表記揺れや文字化け（例：ߌ, PM, pm 等）への頑健な対応
+                                // クールの判定 (月水金か火木土か)
                                 const coolStr = String(cool || "").toLowerCase();
-                                const isPM = coolStr.indexOf("後") !== -1 || coolStr.indexOf("p") !== -1 || coolStr.indexOf("pm") !== -1;
+                                const isMWF = coolStr.indexOf("月") !== -1 || coolStr.indexOf("水") !== -1 || coolStr.indexOf("金") !== -1 || coolStr.indexOf("m") !== -1 || coolStr.indexOf("w") !== -1 || coolStr.indexOf("f") !== -1;
+                                const isTTS = coolStr.indexOf("火") !== -1 || coolStr.indexOf("木") !== -1 || coolStr.indexOf("土") !== -1 || coolStr.indexOf("t") !== -1 || coolStr.indexOf("s") !== -1;
 
+                                let isFirstTreatmentDay = false;
+
+                                if (isMWF && (dayOfWeek === 1 || dayOfWeek === 3 || dayOfWeek === 5)) {
+                                    // 月水金パターンの初回判定: 1日から前日までの間に月水金が一度もなければ、今日が初回
+                                    isFirstTreatmentDay = true;
+                                    for (let d = 1; d < dayNum; d++) {
+                                        const prevDay = new Date(year, month, d).getDay();
+                                        if (prevDay === 1 || prevDay === 3 || prevDay === 5) {
+                                            isFirstTreatmentDay = false;
+                                            break;
+                                        }
+                                    }
+                                } else if (isTTS && (dayOfWeek === 2 || dayOfWeek === 4 || dayOfWeek === 6)) {
+                                    // 火木土パターンの初回判定: 1日から前日までの間に火木土が一度もなければ、今日が初回
+                                    isFirstTreatmentDay = true;
+                                    for (let d = 1; d < dayNum; d++) {
+                                        const prevDay = new Date(year, month, d).getDay();
+                                        if (prevDay === 2 || prevDay === 4 || prevDay === 6) {
+                                            isFirstTreatmentDay = false;
+                                            break;
+                                        }
+                                    }
+                                }
+
+                                // クールの表記揺れや文字化け（例：午後, PM, pm 等）の判定
+                                const isPM = coolStr.indexOf("後") !== -1 || coolStr.indexOf("p") !== -1 || coolStr.indexOf("pm") !== -1;
                                 const isSatPM = (dayOfWeek === 6) && isPM;
-                                if (isFirstMonOrTue) {
+
+                                // 最終セット名の決定
+                                if (isFirstTreatmentDay) {
                                     return isSatPM ? "auto_HD_月初回_土曜午後" : "auto_HD_月初回_通常";
                                 } else {
                                     return isSatPM ? "auto_HD_土曜午後" : "auto_HD_通常";
