@@ -189,7 +189,7 @@ function doGet(e) {
 
           // スプレッドシートが空欄の場合、自動判定されたセット名を割り当て
           if (!digikarCostVal) {
-            digikarCostVal = determineSet(targetDate, patientCool);
+            digikarCostVal = determineSet(targetDate, day, patientCool);
           }
 
           patients.push({
@@ -199,6 +199,7 @@ function doGet(e) {
             publicFund1: pub1Val,
             publicFund2: pub2Val,
             publicFund3: pub3Val,
+            day: day, // 曜日情報（例：月水金）を返却用データに追加
             cool: patientCool,
             doctor: assignedDoctor,
             digikarKarte: digikarKarteVal,
@@ -235,19 +236,51 @@ function doGet(e) {
 }
 
 /**
- * 実行日付とクールから自動入力用のセット名を算出します。
+ * 実行日付と曜日、クールから自動入力用のセット名を算出します。
  */
-function determineSet(date, cool) {
+function determineSet(date, day, cool) {
   const dayNum = date.getDate();
   const dayOfWeek = date.getDay(); // 0:日, 1:月, 2:火, 3:水, 4:木, 5:金, 6:土
+  const year = date.getFullYear();
+  const month = date.getMonth();
 
-  // 1. 初回判定 (第1月曜日[1] または 第1火曜日[2] = 日付が7以下で曜日が月火)
-  const isFirstMonOrTue = (dayNum <= 7) && (dayOfWeek === 1 || dayOfWeek === 2);
-  
+  let isFirstTreatmentDay = false;
+
+  // 月初回は必ず3日以内に生じる（日曜休診等を挟んでも最遅で3日）。3日より後の日付は初回判定を行わない。
+  if (dayNum <= 3) {
+    const dayStr = String(day || "").toLowerCase();
+    const isMWF = dayStr.indexOf("月") !== -1 || dayStr.indexOf("水") !== -1 || dayStr.indexOf("金") !== -1 || dayStr.indexOf("m") !== -1 || dayStr.indexOf("w") !== -1 || dayStr.indexOf("f") !== -1;
+    const isTTS = dayStr.indexOf("火") !== -1 || dayStr.indexOf("木") !== -1 || dayStr.indexOf("土") !== -1 || dayStr.indexOf("t") !== -1 || dayStr.indexOf("s") !== -1;
+
+    if (isMWF && (dayOfWeek === 1 || dayOfWeek === 3 || dayOfWeek === 5)) {
+      // 月水金パターンの初回判定: 1日から前日までの間に月水金が一度もなければ、今日が初回
+      isFirstTreatmentDay = true;
+      for (let d = 1; d < dayNum; d++) {
+        const prevDay = new Date(year, month, d).getDay();
+        if (prevDay === 1 || prevDay === 3 || prevDay === 5) {
+          isFirstTreatmentDay = false;
+          break;
+        }
+      }
+    } else if (isTTS && (dayOfWeek === 2 || dayOfWeek === 4 || dayOfWeek === 6)) {
+      // 火木土パターンの初回判定: 1日から前日までの間に火木土が一度もなければ、今日が初回
+      isFirstTreatmentDay = true;
+      for (let d = 1; d < dayNum; d++) {
+        const prevDay = new Date(year, month, d).getDay();
+        if (prevDay === 2 || prevDay === 4 || prevDay === 6) {
+          isFirstTreatmentDay = false;
+          break;
+        }
+      }
+    }
+  }
+
   // 2. 土曜午後判定
-  const isSatPM = (dayOfWeek === 6) && (cool === "午後" || cool === "PM");
+  const coolStr = String(cool || "").toLowerCase();
+  const isPM = coolStr.indexOf("後") !== -1 || coolStr.indexOf("p") !== -1 || coolStr.indexOf("pm") !== -1;
+  const isSatPM = (dayOfWeek === 6) && isPM;
 
-  if (isFirstMonOrTue) {
+  if (isFirstTreatmentDay) {
     return isSatPM ? "auto_HD_月初回_土曜午後" : "auto_HD_月初回_通常";
   } else {
     return isSatPM ? "auto_HD_土曜午後" : "auto_HD_通常";

@@ -520,42 +520,50 @@
                                 targetDate = new Date(y, m, d);
                             }
 
-                            const determineSetJS = (date, cool) => {
+                            const determineSetJS = (date, day, cool) => {
                                 const dayNum = date.getDate();
                                 const dayOfWeek = date.getDay(); // 0:日, 1:月, 2:火, 3:水, 4:木, 5:金, 6:土
                                 const year = date.getFullYear();
                                 const month = date.getMonth();
 
-                                // クールの判定 (月水金か火木土か)
-                                const coolStr = String(cool || "").toLowerCase();
-                                const isMWF = coolStr.indexOf("月") !== -1 || coolStr.indexOf("水") !== -1 || coolStr.indexOf("金") !== -1 || coolStr.indexOf("m") !== -1 || coolStr.indexOf("w") !== -1 || coolStr.indexOf("f") !== -1;
-                                const isTTS = coolStr.indexOf("火") !== -1 || coolStr.indexOf("木") !== -1 || coolStr.indexOf("土") !== -1 || coolStr.indexOf("t") !== -1 || coolStr.indexOf("s") !== -1;
-
                                 let isFirstTreatmentDay = false;
 
-                                if (isMWF && (dayOfWeek === 1 || dayOfWeek === 3 || dayOfWeek === 5)) {
-                                    // 月水金パターンの初回判定: 1日から前日までの間に月水金が一度もなければ、今日が初回
-                                    isFirstTreatmentDay = true;
-                                    for (let d = 1; d < dayNum; d++) {
-                                        const prevDay = new Date(year, month, d).getDay();
-                                        if (prevDay === 1 || prevDay === 3 || prevDay === 5) {
-                                            isFirstTreatmentDay = false;
-                                            break;
+                                // 月初回は必ず3日以内に生じる（日曜休診等を挟んでも最遅で3日）。3日より後の日付は初回判定を行わない。
+                                if (dayNum <= 3) {
+                                    // クールの判定 (月水金か火木土か)
+                                    // 引数の day（例: "月水金"）を優先的に使用し、無ければ cool もフォールバックとして検索対象にする
+                                    const dayStr = String(day || "").toLowerCase();
+                                    const coolStr = String(cool || "").toLowerCase();
+                                    const combinedStr = dayStr + "|" + coolStr;
+                                    
+                                    const isMWF = combinedStr.indexOf("月") !== -1 || combinedStr.indexOf("水") !== -1 || combinedStr.indexOf("金") !== -1 || combinedStr.indexOf("m") !== -1 || combinedStr.indexOf("w") !== -1 || combinedStr.indexOf("f") !== -1;
+                                    const isTTS = combinedStr.indexOf("火") !== -1 || combinedStr.indexOf("木") !== -1 || combinedStr.indexOf("土") !== -1 || combinedStr.indexOf("t") !== -1 || combinedStr.indexOf("s") !== -1;
+
+                                    if (isMWF && (dayOfWeek === 1 || dayOfWeek === 3 || dayOfWeek === 5)) {
+                                        // 月水金パターンの初回判定: 1日から前日までの間に月水金が一度もなければ、今日が初回
+                                        isFirstTreatmentDay = true;
+                                        for (let d = 1; d < dayNum; d++) {
+                                            const prevDay = new Date(year, month, d).getDay();
+                                            if (prevDay === 1 || prevDay === 3 || prevDay === 5) {
+                                                isFirstTreatmentDay = false;
+                                                break;
+                                            }
                                         }
-                                    }
-                                } else if (isTTS && (dayOfWeek === 2 || dayOfWeek === 4 || dayOfWeek === 6)) {
-                                    // 火木土パターンの初回判定: 1日から前日までの間に火木土が一度もなければ、今日が初回
-                                    isFirstTreatmentDay = true;
-                                    for (let d = 1; d < dayNum; d++) {
-                                        const prevDay = new Date(year, month, d).getDay();
-                                        if (prevDay === 2 || prevDay === 4 || prevDay === 6) {
-                                            isFirstTreatmentDay = false;
-                                            break;
+                                    } else if (isTTS && (dayOfWeek === 2 || dayOfWeek === 4 || dayOfWeek === 6)) {
+                                        // 火木土パターンの初回判定: 1日から前日までの間に火木土が一度もなければ、今日が初回
+                                        isFirstTreatmentDay = true;
+                                        for (let d = 1; d < dayNum; d++) {
+                                            const prevDay = new Date(year, month, d).getDay();
+                                            if (prevDay === 2 || prevDay === 4 || prevDay === 6) {
+                                                isFirstTreatmentDay = false;
+                                                break;
+                                            }
                                         }
                                     }
                                 }
 
                                 // クールの表記揺れや文字化け（例：午後, PM, pm 等）の判定
+                                const coolStr = String(cool || "").toLowerCase();
                                 const isPM = coolStr.indexOf("後") !== -1 || coolStr.indexOf("p") !== -1 || coolStr.indexOf("pm") !== -1;
                                 const isSatPM = (dayOfWeek === 6) && isPM;
 
@@ -571,7 +579,7 @@
                             const targetPatients = json.patients
                                 .filter(p => p.patientId)
                                 .map(p => {
-                                    const baseSet = determineSetJS(targetDate, p.cool);
+                                    const baseSet = determineSetJS(targetDate, p.day, p.cool);
                                     if (p.digikarCost) {
                                         const costStr = String(p.digikarCost).trim();
                                         if (costStr.startsWith("auto_HD_")) {
@@ -1127,17 +1135,32 @@
                 if (checkCount === 1 || checkCount % 5 === 0) {
                     console.log(`[DigikarAutoInput] findSetElement loop check #${checkCount}. Found ${items.length} potential set item elements in DOM.`);
                 }
+
+                // 1. 完全一致する要素を最優先で探索
                 for (let el of items) {
-                    // 自作パネル内の要素は探索から除外する
+                    if (el.closest('#digikar-auto-panel')) continue;
+
+                    const text = el.innerText.trim();
+                    if (normalize(text) === targetNorm && text.length > 0) {
+                        const rect = el.getBoundingClientRect();
+                        const isVisible = el.offsetParent !== null && rect.width > 0 && rect.height > 0;
+                        if (isVisible) {
+                            console.log(`[DigikarAutoInput] Perfect visible match found! Text: "${text}", Element:`, el);
+                            return el;
+                        }
+                    }
+                }
+
+                // 2. 完全一致が見つからない場合、部分一致（後方互換用）で探索
+                for (let el of items) {
                     if (el.closest('#digikar-auto-panel')) continue;
 
                     const text = el.innerText.trim();
                     if (normalize(text).includes(targetNorm) && text.length > 0) {
-                        // 画面上に実際に表示されている（クリック可能な）要素のみを対象とする
                         const rect = el.getBoundingClientRect();
                         const isVisible = el.offsetParent !== null && rect.width > 0 && rect.height > 0;
                         if (isVisible) {
-                            console.log(`[DigikarAutoInput] Visible match found! Text: "${text}", Element:`, el);
+                            console.log(`[DigikarAutoInput] Partial visible match found! Text: "${text}", Element:`, el);
                             return el;
                         } else {
                             console.log(`[DigikarAutoInput] Ignore invisible match: "${text}"`);
