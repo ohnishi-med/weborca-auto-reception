@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         M3デジカル 受付画面起点・自動セット入力ツール
 // @namespace    http://tampermonkey.net/
-// @version      4.4
+// @version      4.5
 // @description  デジカル受付画面から透析患者カルテへ順次遷移し、セット適用・一時保存・帰還を自動ループ処理します
 // @author       Antigravity
 // @match        https://*.digikar.jp/reception/*
@@ -262,6 +262,7 @@
                     <div id="digikar-control-area" style="display: flex; flex-direction: column; gap: 6px;">
                         <button class="digikar-btn-primary" id="digikar-auto-start-karte" style="margin-top: 4px;">算定・カルテ 一括入力</button>
                         <button class="digikar-btn-primary" id="digikar-auto-start-regular" style="margin-top: 4px; background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%); box-shadow: 0 3px 6px rgba(3, 105, 161, 0.2);">定期処方 一括入力</button>
+                        <button class="digikar-btn-primary" id="digikar-auto-start-xray" style="margin-top: 4px; background: linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%); box-shadow: 0 3px 6px rgba(109, 40, 217, 0.2);">レントゲン 一括入力</button>
                         <button class="digikar-btn-secondary" id="digikar-auto-stop" style="margin-top: 4px; display: none;">一時停止</button>
                     </div>
                     <div style="text-align: right; display: flex; justify-content: space-between; align-items: center; margin-top: 8px;">
@@ -299,6 +300,7 @@
             this.statusEl = div.querySelector('#digikar-auto-status');
             this.startBtnKarte = div.querySelector('#digikar-auto-start-karte');
             this.startBtnRegular = div.querySelector('#digikar-auto-start-regular');
+            this.startBtnXray = div.querySelector('#digikar-auto-start-xray');
             this.stopBtn = div.querySelector('#digikar-auto-stop');
 
             const settingsToggle = div.querySelector('#digikar-auto-settings-toggle');
@@ -373,6 +375,7 @@
 
             this.startBtnKarte.addEventListener('click', () => this.startLoop('karte'));
             this.startBtnRegular.addEventListener('click', () => this.startLoop('regular'));
+            this.startBtnXray.addEventListener('click', () => this.startLoop('xray'));
             this.stopBtn.addEventListener('click', () => this.stopLoop());
 
             // ドラッグ＆ドロップ機能の実装
@@ -457,12 +460,14 @@
             if (active) {
                 this.startBtnKarte.style.display = "none";
                 this.startBtnRegular.style.display = "none";
+                this.startBtnXray.style.display = "none";
                 this.stopBtn.style.display = "block";
                 document.getElementById('digikar-panel-indicator').innerText = "実行中";
                 document.getElementById('digikar-panel-indicator').style.color = "#0d9488";
             } else {
                 this.startBtnKarte.style.display = "block";
                 this.startBtnRegular.style.display = "block";
+                this.startBtnXray.style.display = "block";
                 this.stopBtn.style.display = "none";
                 document.getElementById('digikar-panel-indicator').innerText = "待機中";
                 document.getElementById('digikar-panel-indicator').style.color = "#64748b";
@@ -476,7 +481,7 @@
             if (this.isActive) return;
 
             localStorage.removeItem(KEY_ERRORS);
-            const modeText = mode === 'karte' ? '算定・カルテ' : '定期処方';
+            const modeText = mode === 'karte' ? '算定・カルテ' : (mode === 'xray' ? 'レントゲン' : '定期処方');
             this.log(`GASから本日の透析患者データを取得中 (${modeText})...`);
             this.updateUIActive(true);
 
@@ -765,6 +770,7 @@
             const runMode = localStorage.getItem(KEY_RUN_MODE) || 'karte';
             const runKarteCost = runMode === 'karte';
             const runRegular = runMode === 'regular';
+            const runXray = runMode === 'xray';
 
             // 1. カルテエディタ（Tiptap/ProseMirror）への入力 (カルテ記述指定があり、かつ「算定・カルテ」チェックがONの場合)
             if (runKarteCost && patient.digikarKarte) {
@@ -779,8 +785,8 @@
                 }
             }
 
-            // 2. 「セット」タブのクリック (「算定・カルテ」または「定期処方」がONの場合に実行)
-            if (runKarteCost || runRegular) {
+            // 2. 「セット」タブのクリック (「算定・カルテ」または「定期処方」または「レントゲン」がONの場合に実行)
+            if (runKarteCost || runRegular || runXray) {
                 this.log(`右パネルの「セット」タブをクリックします...`);
                 // 右パネルのセットタブを探してクリック
                 const tabs = Array.from(document.querySelectorAll('li, div, button'));
@@ -862,6 +868,35 @@
                         await this.skipToNextPatient();
                         return;
                     }
+                }
+            }
+
+            // 2.1.2 レントゲンセットの自動入力 (「レントゲン」チェックがONの場合)
+            if (runXray) {
+                this.log(`レントゲンセット「auto_レントゲン」を画面上で探索中...`);
+                let matchedXrayElement = await this.findSetElement("auto_レントゲン", 1500);
+
+                if (!matchedXrayElement) {
+                    const folderPath = GM_getValue('digikar_folder_name', '透析回診 > 自動算定入力');
+                    this.log(`セットが見つかりません。フォルダ「${folderPath}」の多階層展開を試みます...`);
+                    await this.expandMultiDepthFolders(folderPath);
+
+                    // 展開後に最終確認
+                    matchedXrayElement = await this.findSetElement("auto_レントゲン", 2000);
+                }
+
+                if (matchedXrayElement) {
+                    console.log(`[DigikarAutoInput] Clicking matched xray set element:`, matchedXrayElement);
+                    matchedXrayElement.click();
+                    this.log(`セット「auto_レントゲン」を適用しました。`);
+                    await sleep(WAIT_MS);
+                } else {
+                    const errorMsg = `セット「auto_レントゲン」が画面上に見つかりませんでした。`;
+                    this.log(`❌ ${errorMsg}`);
+                    console.error(`[DigikarAutoInput] ${errorMsg}`);
+                    this.addError(patient.patientId, errorMsg);
+                    await this.skipToNextPatient();
+                    return;
                 }
             }
 
