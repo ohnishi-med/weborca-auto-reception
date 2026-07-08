@@ -296,6 +296,9 @@
             `;
             document.body.appendChild(div);
 
+            // 受付(reception)画面以外(カルテ・患者ページ)では初期状態からパネルを非表示にする
+            div.style.display = window.location.href.includes('/reception/') ? '' : 'none';
+
             this.panel = div;
             this.statusEl = div.querySelector('#digikar-auto-status');
             this.startBtnKarte = div.querySelector('#digikar-auto-start-karte');
@@ -1315,6 +1318,12 @@
                 return;
             }
             console.log(`[DigikarAutoInput] checkCurrentPage URL: ${url}, isActive: ${this.isActive}`);
+
+            // 受付(reception)画面以外(カルテ・患者ページ)ではパネルを非表示にする
+            if (this.panel) {
+                this.panel.style.display = url.includes('/reception/') ? '' : 'none';
+            }
+
             if (url.includes('/reception/')) {
                 // 受付一覧画面
                 if (this.isActive) {
