@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         WebORCA 自動受付ツール
 // @namespace    http://tampermonkey.net/
-// @version      2.2
+// @version      2.3
 // @description  スプレッドシートから曜日・クールの患者リストを取得し、自動受付を行います (自動ログイン制御可能版)
 // @author       Tsuyoshi Ohnishi
 // @match        *://weborca.cloud.orcamo.jp/*
@@ -334,6 +334,9 @@
         <button class="reception-btn-primary" id="reception-start-today" style="background: linear-gradient(135deg, #0f766e 0%, #115e59 100%); margin-top: 6px;">
           本日分（全クール）を受付
         </button>
+        <button class="reception-btn-primary" id="reception-fetch-list" style="background: linear-gradient(135deg, #7c3aed 0%, #5b21b6 100%); margin-top: 6px; font-size: 12px;">
+          📋 患者リスト取得（個別テスト用）
+        </button>
         <button class="reception-btn-link" id="reception-open-sheet" style="margin-top: 6px;">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
             <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
@@ -378,6 +381,7 @@
       this.statusEl = div.querySelector('#reception-status');
       this.startBtn = div.querySelector('#reception-start');
       this.startTodayBtn = div.querySelector('#reception-start-today');
+      this.fetchListBtn = div.querySelector('#reception-fetch-list');
       this.stopBtn = div.querySelector('#reception-stop');
       // body container for minimize toggle
       this.bodyContainer = div.querySelector('#reception-body');
@@ -389,6 +393,7 @@
 
       this.startBtn.addEventListener('click', () => this.startProcess());
       this.startTodayBtn.addEventListener('click', () => this.startProcess("all"));
+      this.fetchListBtn.addEventListener('click', () => this.fetchPatientList());
       const openSheetBtn = div.querySelector('#reception-open-sheet');
       if (openSheetBtn) {
         openSheetBtn.addEventListener('click', () => {
@@ -431,6 +436,7 @@
       if (this.isActive) {
         this.startBtn.disabled = true;
         if (this.startTodayBtn) this.startTodayBtn.disabled = true;
+        if (this.fetchListBtn) this.fetchListBtn.disabled = true;
         this.stopBtn.style.display = "block";
         this.stopBtn.disabled = false;
         this.log("自動実行中... 画面遷移を待機しています。");
@@ -469,12 +475,26 @@
                         `${p.publicFund2 ? ' ' + p.publicFund2 : ''}` + 
                         `${p.publicFund3 ? ' ' + p.publicFund3 : ''}`;
         return `
-          <div style="padding: 6px 4px; border-bottom: 1px solid rgba(0,0,0,0.05); display: flex; justify-content: space-between; align-items: center; transition: background-color 0.2s;" id="preview-row-${p.patientId}">
-            <span style="font-weight: bold;">${p.patientId} <span style="font-weight: normal; font-size: 9px; color: #64748b;">(${p.cool})</span></span>
-            <span style="color: #475569; font-size: 10px;" class="preview-status-badge">${insText} / ${p.doctor || '無'}</span>
+          <div style="padding: 4px 4px; border-bottom: 1px solid rgba(0,0,0,0.05); display: flex; justify-content: space-between; align-items: center; gap: 4px; transition: background-color 0.2s;" id="preview-row-${p.patientId}">
+            <span style="flex-shrink: 0;">
+              <span style="font-weight: bold;">${p.patientId}</span>
+              <span style="font-size: 10px; color: #0f766e; font-weight: 600; margin-left: 3px;">${p.patientName || ''}</span>
+              <span style="font-weight: normal; font-size: 9px; color: #64748b; margin-left: 2px;">(${p.cool})</span>
+            </span>
+            <span style="color: #475569; font-size: 10px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" class="preview-status-badge">${insText} / ${p.doctor || '無'}</span>
+            <button class="preview-run-btn" data-patient-id="${p.patientId}" style="flex-shrink: 0; padding: 2px 6px; font-size: 10px; border: none; border-radius: 4px; background: linear-gradient(135deg, #7c3aed, #5b21b6); color: white; cursor: pointer; font-weight: bold;" title="この患者のみ受付実行">▶</button>
           </div>
         `;
       }).join('');
+
+      // 各▶ボタンにクリックイベントを登録
+      this.previewListEl.querySelectorAll('.preview-run-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          const patientId = e.currentTarget.dataset.patientId;
+          const patient = this.patientsQueue.find(p => String(p.patientId) === String(patientId));
+          if (patient) this.runSinglePatient(patient);
+        });
+      });
       
       this.previewContainer.style.display = 'block';
     }
@@ -691,6 +711,56 @@
       return false;
     }
 
+    /**
+     * 患者リストのみ取得してプレビュー表示（受付は行わない）
+     */
+    async fetchPatientList() {
+      if (this.isRunning) return;
+      const day = this.daySelect.value;
+      const cool = this.coolSelect.value;
+      this.fetchListBtn.disabled = true;
+      this.log(`📋 ${day}曜日・${cool}クールの患者リストを取得中...`);
+      try {
+        const result = await this.fetchData(day, cool);
+        this.patientsQueue = result.patients || [];
+        this.targetDoctor = result.doctor || "";
+        this.updatePreviewList(this.patientsQueue);
+        this.log(`✅ ${this.patientsQueue.length}件取得しました。▶ボタンで個別に受付テストできます。`, 'success');
+      } catch (err) {
+        this.log(`取得エラー: ${err.message}`, 'error');
+      } finally {
+        this.fetchListBtn.disabled = false;
+      }
+    }
+
+    /**
+     * 指定した1人の患者のみ受付処理を実行（個別テスト用）
+     */
+    async runSinglePatient(patient) {
+      if (this.isRunning) {
+        this.log('現在処理中です。完了後に実行してください。', 'error');
+        return;
+      }
+      this.isRunning = true;
+      this.log(`▶ 個別テスト実行: 患者ID ${patient.patientId}`);
+      this.setPreviewRowStatus(patient.patientId, 'processing');
+      try {
+        await this.processReception(patient);
+        this.log(`✅ 患者ID ${patient.patientId} の受付が完了しました。`, 'success');
+        this.setPreviewRowStatus(patient.patientId, 'success');
+      } catch (err) {
+        if (err instanceof SkipPatientError) {
+          this.log(`⏭ スキップ: ${err.message}`, 'error');
+          this.setPreviewRowStatus(patient.patientId, 'skipped', err.message);
+        } else {
+          this.log(`❌ エラー: ${err.message}`, 'error');
+          this.setPreviewRowStatus(patient.patientId, 'error', err.message);
+        }
+      } finally {
+        this.isRunning = false;
+      }
+    }
+
     startProcess(coolOverride = null) {
       if (this.isActive || this.isRunning) return;
 
@@ -702,11 +772,11 @@
 
       this.startBtn.disabled = true;
       if (this.startTodayBtn) this.startTodayBtn.disabled = true;
+      if (this.fetchListBtn) this.fetchListBtn.disabled = true;
       this.stopBtn.style.display = "block";
       this.stopBtn.disabled = false;
 
       this.log(`自動受付処理を開始しました。(${day}曜日 / ${cool === 'all' ? '本日分' : cool})`);
-      
       // 画面の自動遷移チェックをキック
       this.checkScreenAndNavigate();
     }
@@ -719,6 +789,7 @@
       // UIのボタン表示状態を強制更新
       this.startBtn.disabled = true;
       if (this.startTodayBtn) this.startTodayBtn.disabled = true;
+      if (this.fetchListBtn) this.fetchListBtn.disabled = true;
       this.stopBtn.style.display = "block";
       this.stopBtn.disabled = false;
 
@@ -836,6 +907,7 @@
       this.isRunning = false;
       this.startBtn.disabled = false;
       if (this.startTodayBtn) this.startTodayBtn.disabled = false;
+      if (this.fetchListBtn) this.fetchListBtn.disabled = false;
       this.stopBtn.style.display = "none";
     }
 
@@ -960,7 +1032,12 @@
 
           if (matchedRow) {
             this.log("合致する保険組合せを見つけました: [" + combinationCode + "] " + combinationText);
-            matchedRow.click();
+            // WebORCA はマウスイベントを連続発火させないと行選択が反応しないケースがある
+            // mousedown → mouseup → click の順で明示的に発火する
+            const clickTarget = matchedRow.querySelector('td') || matchedRow;
+            ['mousedown', 'mouseup', 'click'].forEach(eventType => {
+              clickTarget.dispatchEvent(new MouseEvent(eventType, { bubbles: true, cancelable: true }));
+            });
             await this.sleep(600);
           } else {
             // 保険組合せが見つからない場合は SkipPatientError をスローして次の患者へ進む
